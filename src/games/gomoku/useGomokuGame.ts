@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import { createGame, placeStone, resetGame, undoLastMove } from './core/game'
 import { type GameState, type Position } from './core/types'
@@ -43,7 +43,6 @@ export function useGomokuGame(storage: GomokuStoragePort): GomokuGameController 
   const storageRef = useRef(storage)
   const initialStorageRef = useRef(storage)
   const initializedRef = useRef(false)
-  storageRef.current = storage
 
   useLayoutEffect(() => {
     if (initializedRef.current) return
@@ -54,16 +53,20 @@ export function useGomokuGame(storage: GomokuStoragePort): GomokuGameController 
     setState(loadedState)
   }, [])
 
-  const updateGame = (nextGame: GameState): void => {
+  useLayoutEffect(() => {
+    storageRef.current = storage
+  }, [storage])
+
+  const updateGame = useCallback((nextGame: GameState): void => {
     gameRef.current = nextGame
     setState((current) => ({ ...current, game: nextGame }))
-  }
+  }, [])
 
-  const showStorageUnavailableNotice = (): void => {
+  const showStorageUnavailableNotice = useCallback((): void => {
     setState((current) => ({ ...current, notice: STORAGE_UNAVAILABLE_NOTICE }))
-  }
+  }, [])
 
-  const play = (position: Position): void => {
+  const play = useCallback((position: Position): void => {
     const result = placeStone(gameRef.current, position)
     if (!result.ok) return
 
@@ -71,24 +74,28 @@ export function useGomokuGame(storage: GomokuStoragePort): GomokuGameController 
 
     const saveResult = storageRef.current.save(result.state)
     if (!saveResult.ok) showStorageUnavailableNotice()
-  }
+  }, [showStorageUnavailableNotice, updateGame])
 
-  const undo = (): void => {
+  const undo = useCallback((): void => {
     const nextGame = undoLastMove(gameRef.current)
     if (nextGame === gameRef.current) return
 
     updateGame(nextGame)
     const saveResult = storageRef.current.save(nextGame)
     if (!saveResult.ok) showStorageUnavailableNotice()
-  }
+  }, [showStorageUnavailableNotice, updateGame])
 
-  const restart = (): void => {
+  const restart = useCallback((): void => {
     const nextGame = resetGame()
     updateGame(nextGame)
 
     const clearResult = storageRef.current.clear()
     if (!clearResult.ok) showStorageUnavailableNotice()
-  }
+  }, [showStorageUnavailableNotice, updateGame])
+
+  const dismissNotice = useCallback((): void => {
+    setState((current) => ({ ...current, notice: null }))
+  }, [])
 
   return {
     game: state.game,
@@ -96,6 +103,6 @@ export function useGomokuGame(storage: GomokuStoragePort): GomokuGameController 
     play,
     undo,
     restart,
-    dismissNotice: () => setState((current) => ({ ...current, notice: null })),
+    dismissNotice,
   }
 }

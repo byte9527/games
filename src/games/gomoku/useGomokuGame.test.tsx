@@ -1,5 +1,5 @@
-import { act, renderHook } from '@testing-library/react'
-import { StrictMode, type ReactNode } from 'react'
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { StrictMode, Suspense, startTransition, type ReactNode } from 'react'
 
 import { createGame, placeStone, replayMoves } from './core/game'
 import { BOARD_SIZE, type GameState, type Move, type Position } from './core/types'
@@ -105,6 +105,35 @@ function drawSetup(): { readonly state: GameState; readonly lastPosition: Positi
   return { state, lastPosition: { row: lastMove.row, col: lastMove.col } }
 }
 
+const pendingRender = new Promise<void>(() => undefined)
+
+function SuspendWhenRequested({ suspend }: { readonly suspend: boolean }): null {
+  if (suspend) throw pendingRender
+  return null
+}
+
+function InteractiveGame({
+  storage,
+  suspend,
+  onSuspendedRender,
+}: {
+  readonly storage: GomokuStoragePort
+  readonly suspend: boolean
+  readonly onSuspendedRender: () => void
+}): ReactNode {
+  const controller = useGomokuGame(storage)
+  if (suspend) onSuspendedRender()
+
+  return (
+    <>
+      <button type="button" onClick={() => controller.play({ row: 7, col: 7 })}>
+        落子
+      </button>
+      <SuspendWhenRequested suspend={suspend} />
+    </>
+  )
+}
+
 describe('useGomokuGame', () => {
   it('无存档时创建新棋局且不显示提示', () => {
     const storage = new FakeStorage({ kind: 'empty' })
@@ -127,6 +156,21 @@ describe('useGomokuGame', () => {
 
     expect(result.current.game).toBe(savedGame)
     expect(storage.loadCalls).toBe(1)
+  })
+
+  it('真实卸载后重新挂载的新 Hook 实例各自恢复一次', () => {
+    const storage = new FakeStorage({ kind: 'empty' })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>{children}</StrictMode>
+    )
+
+    const firstHook = renderHook(() => useGomokuGame(storage), { wrapper })
+    expect(storage.loadCalls).toBe(1)
+
+    firstHook.unmount()
+    renderHook(() => useGomokuGame(storage), { wrapper })
+
+    expect(storage.loadCalls).toBe(2)
   })
 
   it('恢复有效存档且不显示提示', () => {
@@ -195,6 +239,22 @@ describe('useGomokuGame', () => {
     act(() => result.current.dismissNotice())
 
     expect(result.current.notice).toBeNull()
+  })
+
+  it('存储端口 save 抛出的编程错误不会被吞掉', () => {
+    const programmingError = new Error('unexpected save failure')
+    const storage: GomokuStoragePort = {
+      load: () => ({ kind: 'empty' }),
+      save: () => {
+        throw programmingError
+      },
+      clear: () => ({ ok: true }),
+    }
+    const { result } = renderHook(() => useGomokuGame(storage))
+
+    expect(() => {
+      act(() => result.current.play({ row: 7, col: 7 }))
+    }).toThrow(programmingError)
   })
 
   it('同一次 act 连续落子时基于最新规范状态依次执行', () => {
@@ -335,6 +395,24 @@ describe('useGomokuGame', () => {
     expect(storage.clearCalls).toBe(2)
   })
 
+  it('普通 rerender 保持所有操作回调引用稳定', () => {
+    const storage = new FakeStorage({ kind: 'empty' })
+    const { result, rerender } = renderHook(() => useGomokuGame(storage))
+    const callbacks = {
+      play: result.current.play,
+      undo: result.current.undo,
+      restart: result.current.restart,
+      dismissNotice: result.current.dismissNotice,
+    }
+
+    rerender()
+
+    expect(result.current.play).toBe(callbacks.play)
+    expect(result.current.undo).toBe(callbacks.undo)
+    expect(result.current.restart).toBe(callbacks.restart)
+    expect(result.current.dismissNotice).toBe(callbacks.dismissNotice)
+  })
+
   it('替换存储依赖不重新加载，后续保存与清除使用新依赖', () => {
     const firstStorage = new FakeStorage({ kind: 'empty' })
     const secondStorage = new FakeStorage({ kind: 'invalid' })
@@ -342,6 +420,12 @@ describe('useGomokuGame', () => {
       ({ storage }: { storage: GomokuStoragePort }) => useGomokuGame(storage),
       { initialProps: { storage: firstStorage } },
     )
+    const callbacks = {
+      play: result.current.play,
+      undo: result.current.undo,
+      restart: result.current.restart,
+      dismissNotice: result.current.dismissNotice,
+    }
 
     rerender({ storage: secondStorage })
     act(() => result.current.play({ row: 7, col: 7 }))
@@ -353,5 +437,48 @@ describe('useGomokuGame', () => {
     expect(firstStorage.clearCalls).toBe(0)
     expect(secondStorage.savedStates).toHaveLength(1)
     expect(secondStorage.clearCalls).toBe(1)
+    expect(result.current.play).toBe(callbacks.play)
+    expect(result.current.undo).toBe(callbacks.undo)
+    expect(result.current.restart).toBe(callbacks.restart)
+    expect(result.current.dismissNotice).toBe(callbacks.dismissNotice)
+  })
+
+  it('未提交的挂起 render 不得改变旧控制器使用的存储端口', () => {
+    const firstStorage = new FakeStorage({ kind: 'empty' })
+    const secondStorage = new FakeStorage({ kind: 'empty' })
+    let suspendedRenderCalls = 0
+    const onSuspendedRender = (): void => {
+      suspendedRenderCalls += 1
+    }
+    const view = render(
+      <Suspense fallback={<p>加载中</p>}>
+        <InteractiveGame
+          storage={firstStorage}
+          suspend={false}
+          onSuspendedRender={onSuspendedRender}
+        />
+      </Suspense>,
+    )
+
+    act(() => {
+      startTransition(() => {
+        view.rerender(
+          <Suspense fallback={<p>加载中</p>}>
+            <InteractiveGame
+              storage={secondStorage}
+              suspend
+              onSuspendedRender={onSuspendedRender}
+            />
+          </Suspense>,
+        )
+      })
+    })
+
+    expect(suspendedRenderCalls).toBeGreaterThan(0)
+    expect(screen.queryByText('加载中')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '落子' }))
+
+    expect([firstStorage.savedStates.length, secondStorage.savedStates.length]).toEqual([1, 0])
   })
 })

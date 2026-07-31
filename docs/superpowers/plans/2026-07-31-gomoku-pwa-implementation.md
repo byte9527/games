@@ -6,7 +6,7 @@
 
 **Architecture:** 使用 React 构建合集外壳和游戏界面，使用与 React 无关的纯 TypeScript 模块处理五子棋规则。浏览器能力通过独立适配器接入：`localStorage` 负责活动棋局，`vite-plugin-pwa` 负责安装、离线缓存和更新提示；静态站点通过 GitHub Pages 发布。
 
-**Tech Stack:** React、TypeScript、Vite、React Router、Vitest、React Testing Library、Playwright、vite-plugin-pwa、GitHub Actions
+**Tech Stack:** React、TypeScript、Vite、Vitest、React Testing Library、Playwright、vite-plugin-pwa、GitHub Actions
 
 ---
 
@@ -32,6 +32,7 @@ public/icon-source.svg                    # PWA 图标源文件
 scripts/generate-pwa-icons.mjs            # 生成 PNG 与 Apple 图标
 src/main.tsx                              # React 挂载入口
 src/app/App.tsx                           # 路由与全局页面框架
+src/app/useHashRoute.ts                   # 只监听 window.location.hash 的最小路由 Hook
 src/app/AppErrorBoundary.tsx              # 不可预期渲染错误兜底
 src/app/app.css                           # 全局主题与响应式布局
 src/pages/GameCatalogPage.tsx             # 小游戏合集首页
@@ -81,6 +82,10 @@ e2e/offline.spec.ts                        # 离线重新打开验证
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.9.0 <23"
+  },
+  "packageManager": "npm@10.8.3",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -127,7 +132,7 @@ e2e/offline.spec.ts                        # 离线重新打开验证
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src"]
 }
@@ -157,8 +162,8 @@ e2e/offline.spec.ts                        # 离线重新打开验证
 Run:
 
 ```bash
-npm install react react-dom react-router-dom
-npm install -D typescript vite @vitejs/plugin-react @types/node @types/react @types/react-dom vitest jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event @playwright/test vite-plugin-pwa sharp
+npm install react react-dom
+npm install -D typescript vite @vitejs/plugin-react @types/node@22 @types/react @types/react-dom vitest jsdom@26.1.0 @testing-library/react @testing-library/jest-dom @testing-library/user-event @playwright/test vite-plugin-pwa sharp
 npx playwright install chromium
 ```
 
@@ -177,6 +182,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
   },
@@ -335,6 +341,7 @@ git push -u origin HEAD
 - Create: `src/pages/GameCatalogPage.tsx`
 - Create: `src/pages/GameCatalogPage.test.tsx`
 - Create: `src/games/gomoku/GomokuPage.tsx`
+- Create: `src/app/useHashRoute.ts`
 - Modify: `src/app/App.tsx`
 - Modify: `src/app/app.css`
 
@@ -344,7 +351,7 @@ git push -u origin HEAD
 
 ```tsx
 import userEvent from '@testing-library/user-event'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { App } from '../app/App'
 
 describe('game catalog', () => {
@@ -356,8 +363,10 @@ describe('game catalog', () => {
     expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: /五子棋/ }))
 
-    expect(screen.getByRole('heading', { name: '五子棋' })).toBeInTheDocument()
-    expect(window.location.hash).toBe('#/games/gomoku')
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: '五子棋' })).toBeInTheDocument()
+      expect(window.location.hash).toBe('#/games/gomoku')
+    })
   })
 })
 ```
@@ -393,7 +402,6 @@ export const gameCatalog: readonly GameCatalogItem[] = [
 `src/pages/GameCatalogPage.tsx`：
 
 ```tsx
-import { Link } from 'react-router-dom'
 import { gameCatalog } from '../games/catalog'
 
 export function GameCatalogPage() {
@@ -406,11 +414,11 @@ export function GameCatalogPage() {
       </header>
       <section className="game-grid" aria-label="游戏列表">
         {gameCatalog.map((game) => (
-          <Link className="game-card" key={game.id} to={game.path}>
+          <a className="game-card" href={`#${game.path}`} key={game.id}>
             <span className="game-card__icon" aria-hidden="true">● ○</span>
             <strong>{game.title}</strong>
             <span>{game.description}</span>
-          </Link>
+          </a>
         ))}
       </section>
     </main>
@@ -421,36 +429,49 @@ export function GameCatalogPage() {
 `src/games/gomoku/GomokuPage.tsx`：
 
 ```tsx
-import { Link } from 'react-router-dom'
-
 export function GomokuPage() {
   return (
     <main className="gomoku-page">
-      <Link to="/">返回小游戏</Link>
+      <a href="#/">返回小游戏</a>
       <h1>五子棋</h1>
     </main>
   )
 }
 ```
 
+`src/app/useHashRoute.ts`：
+
+```ts
+import { useEffect, useState } from 'react'
+
+const readRoute = () => window.location.hash.slice(1) || '/'
+
+export function useHashRoute() {
+  const [route, setRoute] = useState(readRoute)
+  useEffect(() => {
+    const updateRoute = () => setRoute(readRoute())
+    window.addEventListener('hashchange', updateRoute)
+    return () => window.removeEventListener('hashchange', updateRoute)
+  }, [])
+  return route
+}
+```
+
 `src/app/App.tsx`：
 
 ```tsx
-import { HashRouter, Route, Routes } from 'react-router-dom'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
+import { useHashRoute } from './useHashRoute'
 import './app.css'
 
 export function App() {
+  const route = useHashRoute()
+
   return (
-    <HashRouter>
-      <div className="app-shell">
-        <Routes>
-          <Route path="/" element={<GameCatalogPage />} />
-          <Route path="/games/gomoku" element={<GomokuPage />} />
-        </Routes>
-      </div>
-    </HashRouter>
+    <div className="app-shell">
+      {route === '/games/gomoku' ? <GomokuPage /> : <GameCatalogPage />}
+    </div>
   )
 }
 ```
@@ -1434,7 +1455,6 @@ git push
 ```tsx
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
 import type { GomokuStoragePort } from './storage/storage'
 import { GomokuPage } from './GomokuPage'
 
@@ -1442,16 +1462,10 @@ const storage: GomokuStoragePort = {
   load: () => ({ kind: 'empty' }), save: () => ({ ok: true }), clear: () => ({ ok: true }),
 }
 
-const renderPage = () => render(
-  <MemoryRouter>
-    <GomokuPage storage={storage} />
-  </MemoryRouter>,
-)
-
 describe('GomokuPage', () => {
   it('requires confirmation before restarting a non-empty game', async () => {
     const user = userEvent.setup()
-    renderPage()
+    render(<GomokuPage storage={storage} />)
     await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
     await user.click(screen.getByRole('button', { name: '重新开始' }))
     expect(screen.getByRole('dialog', { name: '重新开始本局？' })).toBeInTheDocument()
@@ -1461,7 +1475,7 @@ describe('GomokuPage', () => {
 
   it('can undo after a win from the result dialog', async () => {
     const user = userEvent.setup()
-    renderPage()
+    render(<GomokuPage storage={storage} />)
     const moves = [[8,4],[9,4],[8,5],[9,5],[8,6],[9,6],[8,7],[9,7],[8,8]]
     for (const [row, col] of moves) {
       await user.click(screen.getByRole('button', { name: `第 ${row} 行第 ${col} 列，空位` }))
@@ -1535,7 +1549,6 @@ export function ConfirmDialog({
 `ResultDialog.tsx`：
 
 ```tsx
-import { Link } from 'react-router-dom'
 import type { GameState } from '../core/types'
 
 interface ResultDialogProps {
@@ -1555,7 +1568,7 @@ export function ResultDialog({ game, onUndo, onRestart }: ResultDialogProps) {
         <div className="dialog-actions">
           <button type="button" onClick={onUndo}>悔棋一步</button>
           <button type="button" onClick={onRestart}>再来一局</button>
-          <Link to="/">返回小游戏</Link>
+          <a href="#/">返回小游戏</a>
         </div>
       </section>
     </div>
@@ -1582,7 +1595,6 @@ export function NoticeBanner({ message, onDismiss }: { message: string; onDismis
 
 ```tsx
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { createBrowserGomokuStorage, type GomokuStoragePort } from './storage/storage'
 import { useGomokuGame } from './useGomokuGame'
 import { GomokuBoard } from './components/GomokuBoard'
@@ -1606,7 +1618,7 @@ export function GomokuPage({ storage: injected }: { storage?: GomokuStoragePort 
   return (
     <main className="gomoku-page">
       <header className="game-header">
-        <Link to="/" className="back-link">返回小游戏</Link>
+        <a href="#/" className="back-link">返回小游戏</a>
         <h1>五子棋</h1>
         <TurnIndicator game={game} />
       </header>
@@ -2000,6 +2012,7 @@ export default defineConfig({
   ],
   test: {
     environment: 'jsdom',
+    globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
   },
@@ -2037,25 +2050,22 @@ export function UpdatePrompt() {
 将 `App.tsx` 调整为：
 
 ```tsx
-import { HashRouter, Route, Routes } from 'react-router-dom'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
 import { InstallPrompt } from '../pwa/InstallPrompt'
 import { UpdatePrompt } from '../pwa/UpdatePrompt'
+import { useHashRoute } from './useHashRoute'
 import './app.css'
 
 export function App() {
+  const route = useHashRoute()
+
   return (
-    <HashRouter>
-      <div className="app-shell">
-        <InstallPrompt />
-        <Routes>
-          <Route path="/" element={<GameCatalogPage />} />
-          <Route path="/games/gomoku" element={<GomokuPage />} />
-        </Routes>
-        <UpdatePrompt />
-      </div>
-    </HashRouter>
+    <div className="app-shell">
+      <InstallPrompt />
+      {route === '/games/gomoku' ? <GomokuPage /> : <GameCatalogPage />}
+      <UpdatePrompt />
+    </div>
   )
 }
 ```
@@ -2382,7 +2392,7 @@ jobs:
 base: process.env.DEPLOY_BASE ?? '/',
 ```
 
-这样本地开发和 E2E 使用根路径；工作流完成测试后显式使用 `DEPLOY_BASE=/games/` 重建部署产物。HashRouter 避免静态托管刷新时产生 404。
+这样本地开发和 E2E 使用根路径；工作流完成测试后显式使用 `DEPLOY_BASE=/games/` 重建部署产物。hash 路由避免静态托管刷新时产生 404。
 
 - [ ] **Step 3: 编写项目说明**
 

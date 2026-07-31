@@ -38,7 +38,7 @@ export function findWinningLines(
   for (const [rowStep, colStep] of DIRECTIONS) {
     const backward = collectStones(board, origin, player, -rowStep, -colStep)
     const forward = collectStones(board, origin, player, rowStep, colStep)
-    const line = [...backward.reverse(), origin, ...forward]
+    const line = [...backward.reverse(), { ...origin }, ...forward]
 
     if (line.length >= 5) winningLines.push(line)
   }

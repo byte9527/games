@@ -151,6 +151,9 @@ describe('gomoku game', () => {
     expect(winningMove.state.status).toBe('won')
     expect(winningMove.state.winner).toBe('black')
     expect(winningMove.state.currentPlayer).toBe('black')
+    expect(winningMove.state.board[toIndex({ row: 7, col: 7 })]).toBe('black')
+    expect(winningMove.state.history).toHaveLength(5)
+    expect(winningMove.state.history.at(-1)).toEqual({ row: 7, col: 7, player: 'black' })
     expect(winningMove.state.winningLines).toEqual([
       Array.from({ length: 5 }, (_, col) => ({ row: 7, col: col + 3 })),
     ])
@@ -159,6 +162,33 @@ describe('gomoku game', () => {
 
     expect(result).toEqual({ ok: false, error: 'game-over', state: winningMove.state })
     expect(result.state).toBe(winningMove.state)
+  })
+
+  it('隔离获胜线坐标与调用方的可变落子对象', () => {
+    const winningStones = Array.from({ length: 4 }, (_, col) => ({ row: 7, col: col + 3 }))
+    const state = gameWithStones('black', winningStones)
+    const position = { row: 7, col: 7 }
+
+    const result = placeStone(state, position)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('获胜落子应当成功')
+    const winningLine = result.state.winningLines[0]
+    if (!winningLine) throw new Error('获胜后应当保存获胜线')
+    const storedOrigin = winningLine.find(({ row, col }) => row === 7 && col === 7)
+    if (!storedOrigin) throw new Error('获胜线应当包含最后落子')
+
+    position.row = 0
+    position.col = 0
+
+    expect(storedOrigin).not.toBe(position)
+    expect(storedOrigin).toEqual({ row: 7, col: 7 })
+    expect(result.state.board[toIndex({ row: 7, col: 7 })]).toBe('black')
+    expect(result.state.history).toHaveLength(5)
+    expect(result.state.history.at(-1)).toEqual({ row: 7, col: 7, player: 'black' })
+    expect(result.state.winningLines).toEqual([
+      Array.from({ length: 5 }, (_, col) => ({ row: 7, col: col + 3 })),
+    ])
   })
 
   it('满盘无五连时判定和棋并保留最后落子方回合', () => {
@@ -193,6 +223,9 @@ describe('gomoku game', () => {
     expect(result.state.winner).toBeNull()
     expect(result.state.winningLines).toEqual([])
     expect(result.state.currentPlayer).toBe('black')
+    expect(result.state.board[toIndex(finalPosition)]).toBe('black')
+    expect(result.state.history).toHaveLength(BOARD_SIZE * BOARD_SIZE)
+    expect(result.state.history.at(-1)).toEqual({ ...finalPosition, player: 'black' })
 
     const moveAfterDraw = placeStone(result.state, { row: 0, col: 0 })
 

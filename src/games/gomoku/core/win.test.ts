@@ -84,4 +84,44 @@ describe('gomoku winning lines', () => {
 
     expect(findWinningLines(board, { row: 14, col: 9 }, 'black')).toEqual([])
   })
+
+  it('原点为空时不返回获胜线', () => {
+    const origin = { row: 7, col: 7 }
+    const surroundingStones = [
+      { row: 7, col: 5 },
+      { row: 7, col: 6 },
+      { row: 7, col: 8 },
+      { row: 7, col: 9 },
+    ]
+    const board = boardWithStones('black', surroundingStones)
+
+    expect(findWinningLines(board, origin, 'black')).toEqual([])
+  })
+
+  it('原点属于对手时不返回获胜线', () => {
+    const origin = { row: 7, col: 7 }
+    const surroundingStones = [
+      { row: 7, col: 5 },
+      { row: 7, col: 6 },
+      { row: 7, col: 8 },
+      { row: 7, col: 9 },
+    ]
+    const board = [...boardWithStones('black', surroundingStones)]
+    board[toIndex(origin)] = 'white'
+
+    expect(findWinningLines(board, origin, 'black')).toEqual([])
+  })
+
+  it('原点越界时不返回获胜线', () => {
+    const origin = { row: 1, col: -1 }
+    const board = boardWithStones('black', [
+      { row: 0, col: BOARD_SIZE - 1 },
+      { row: 1, col: 0 },
+      { row: 1, col: 1 },
+      { row: 1, col: 2 },
+      { row: 1, col: 3 },
+    ])
+
+    expect(findWinningLines(board, origin, 'black')).toEqual([])
+  })
 })

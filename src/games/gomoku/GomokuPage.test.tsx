@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 
+import { ResultDialog } from './components/ResultDialog'
 import { createGame, placeStone, replayMoves } from './core/game'
 import { BOARD_SIZE, type GameState, type Move, type Position } from './core/types'
 import { type GomokuStoragePort, type LoadResult, type SaveResult } from './storage/storage'
@@ -14,6 +16,7 @@ class FakeStorage implements GomokuStoragePort {
     private readonly loadResult: LoadResult,
     private readonly saveResult: SaveResult = { ok: true },
     private readonly clearResult: SaveResult = { ok: true },
+    private readonly onSave?: (state: GameState) => void,
   ) {}
 
   load(): LoadResult {
@@ -22,6 +25,7 @@ class FakeStorage implements GomokuStoragePort {
 
   save(state: GameState): SaveResult {
     this.savedStates.push(state)
+    this.onSave?.(state)
     return this.saveResult
   }
 
@@ -128,6 +132,14 @@ describe('GomokuPage', () => {
     expect(screen.getByRole('status', { name: '' })).toHaveTextContent('黑方回合')
   })
 
+  it('为页面头部和返回链接提供 Task 10 DOM class 契约', () => {
+    renderPage()
+
+    const heading = screen.getByRole('heading', { level: 1, name: '五子棋' })
+    expect(heading.closest('header')).toHaveClass('game-header')
+    expect(screen.getByRole('link', { name: '返回小游戏' })).toHaveClass('back-link')
+  })
+
   it('未注入存储时通过浏览器存储工厂完成页面 smoke', () => {
     render(<GomokuPage />)
 
@@ -171,6 +183,31 @@ describe('GomokuPage', () => {
     expect(restartButton).toHaveFocus()
   })
 
+  it('确认弹窗显示精确清除说明', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: playMoves([{ row: 7, col: 7 }]) }))
+
+    await user.click(screen.getByRole('button', { name: '重新开始' }))
+
+    const explanation = within(screen.getByRole('dialog', { name: '重新开始本局？' }))
+      .getByText('当前棋局会被清除。')
+    expect(explanation.textContent).toBe('当前棋局会被清除。')
+  })
+
+  it('为弹窗 section、backdrop 和操作区提供 Task 10 DOM class 契约', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: playMoves([{ row: 7, col: 7 }]) }))
+
+    await user.click(screen.getByRole('button', { name: '重新开始' }))
+
+    const dialog = screen.getByRole('dialog', { name: '重新开始本局？' })
+    expect(dialog.tagName).toBe('SECTION')
+    expect(dialog).toHaveClass('dialog-card')
+    expect(dialog.parentElement).toHaveClass('dialog-backdrop')
+    expect(within(dialog).getByRole('button', { name: '取消' }).parentElement)
+      .toHaveClass('dialog-actions')
+  })
+
   it('确认弹窗按 Escape 取消并恢复打开前焦点', async () => {
     const user = userEvent.setup()
     renderPage(new FakeStorage({ kind: 'loaded', state: playMoves([{ row: 7, col: 7 }]) }))
@@ -181,6 +218,27 @@ describe('GomokuPage', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(restartButton).toHaveFocus()
+  })
+
+  it('StrictMode effect replay 后取消确认仍恢复首次弹窗外焦点', async () => {
+    const user = userEvent.setup()
+    render(
+      <StrictMode>
+        <GomokuPage
+          storage={new FakeStorage({
+            kind: 'loaded',
+            state: playMoves([{ row: 7, col: 7 }]),
+          })}
+        />
+      </StrictMode>,
+    )
+    const restartButton = screen.getByRole('button', { name: '重新开始' })
+
+    await user.click(restartButton)
+    expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(restartButton).toHaveFocus())
   })
 
   it('确认重新开始清空棋局、清除存档并关闭弹窗', async () => {
@@ -250,6 +308,37 @@ describe('GomokuPage', () => {
     await waitFor(() => expect(restoredPoint).toHaveFocus())
   })
 
+  it('StrictMode 终局弹窗悔棋后恢复首次键盘落子棋位', async () => {
+    const user = userEvent.setup()
+    let winningPointToBlur: HTMLButtonElement | null = null
+    const storage = new FakeStorage(
+      { kind: 'loaded', state: blackNearWin() },
+      { ok: true },
+      { ok: true },
+      (state) => {
+        if (state.status === 'won') winningPointToBlur?.blur()
+      },
+    )
+    render(
+      <StrictMode>
+        <GomokuPage storage={storage} />
+      </StrictMode>,
+    )
+    const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
+    if (!(winningPoint instanceof HTMLButtonElement)) throw new Error('棋位应当是原生按钮')
+    winningPointToBlur = winningPoint
+    act(() => winningPoint.focus())
+
+    await user.keyboard('{Enter}')
+    const undoButton = within(screen.getByRole('dialog', { name: '黑方获胜' }))
+      .getByRole('button', { name: '悔棋一步' })
+    expect(undoButton).toHaveFocus()
+    await user.click(undoButton)
+
+    const restoredPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
+    await waitFor(() => expect(restoredPoint).toHaveFocus())
+  })
+
   it('结果弹窗把前后 Tab 限制在三个操作内', async () => {
     const user = userEvent.setup()
     renderPage(new FakeStorage({ kind: 'loaded', state: blackWin() }))
@@ -275,6 +364,28 @@ describe('GomokuPage', () => {
     expect(screen.getByText('黑方回合')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '悔棋' })).toBeDisabled()
     expect(storage.clearCalls).toBe(1)
+  })
+
+  it.each([
+    [
+      'playing 棋局',
+      createGame(),
+      'ResultDialog 只能渲染终局棋局。',
+    ],
+    [
+      '缺少 winner 的 won 棋局',
+      { ...createGame(), status: 'won', winner: null } satisfies GameState,
+      '获胜棋局必须包含 winner。',
+    ],
+    [
+      '错误包含 winner 的 draw 棋局',
+      { ...createGame(), status: 'draw', winner: 'black' } satisfies GameState,
+      '和棋棋局不能包含 winner。',
+    ],
+  ] as const)('%s 会暴露明确错误', (_name, game, message) => {
+    expect(() => {
+      render(<ResultDialog game={game} onRestart={() => undefined} onUndo={() => undefined} />)
+    }).toThrow(message)
   })
 
   it.each([

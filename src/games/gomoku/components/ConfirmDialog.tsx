@@ -16,7 +16,7 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
-function focusableElements(dialog: HTMLDivElement): HTMLElement[] {
+function focusableElements(dialog: HTMLElement): HTMLElement[] {
   return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
     .filter((element) => element.getAttribute('aria-hidden') !== 'true')
 }
@@ -34,38 +34,50 @@ function canRestoreFocus(element: HTMLElement): boolean {
 export function ModalDialog({
   title,
   initialFocusRef,
+  restoreFocusRef,
   onEscape,
   children,
 }: {
   readonly title: string
   readonly initialFocusRef: RefObject<HTMLElement | null>
+  readonly restoreFocusRef?: RefObject<HTMLElement | null>
   readonly onEscape?: () => void
   readonly children: ReactNode
 }) {
   const titleId = useId()
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLElement>(null)
   const effectVersionRef = useRef(0)
+  const hasCapturedFocusRef = useRef(false)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
 
   useLayoutEffect(() => {
     const effectVersion = effectVersionRef.current + 1
     effectVersionRef.current = effectVersion
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null
+    if (!hasCapturedFocusRef.current) {
+      hasCapturedFocusRef.current = true
+      const activeElement = restoreFocusRef === undefined
+        ? document.activeElement
+        : restoreFocusRef.current
+      previouslyFocusedRef.current = activeElement instanceof HTMLElement &&
+        dialogRef.current?.contains(activeElement) !== true
+        ? activeElement
+        : null
+    }
 
     initialFocusRef.current?.focus()
 
     return () => {
       queueMicrotask(() => {
         if (effectVersionRef.current !== effectVersion) return
+        const previouslyFocused = previouslyFocusedRef.current
         if (previouslyFocused !== null && canRestoreFocus(previouslyFocused)) {
           previouslyFocused.focus()
         }
       })
     }
-  }, [initialFocusRef])
+  }, [initialFocusRef, restoreFocusRef])
 
-  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
     if (event.key === 'Escape' && onEscape !== undefined) {
       event.preventDefault()
       onEscape()
@@ -101,17 +113,17 @@ export function ModalDialog({
       className="dialog-backdrop"
       role="presentation"
     >
-      <div
+      <section
         aria-labelledby={titleId}
         aria-modal="true"
-        className="dialog"
+        className="dialog-card"
         onKeyDown={handleKeyDown}
         ref={dialogRef}
         role="dialog"
       >
         <h2 id={titleId}>{title}</h2>
         {children}
-      </div>
+      </section>
     </div>
   )
 }
@@ -135,6 +147,7 @@ export function ConfirmDialog({
       onEscape={onCancel}
       title="重新开始本局？"
     >
+      <p>当前棋局会被清除。</p>
       <div className="dialog-actions">
         <button type="button" onClick={onCancel} ref={cancelButtonRef}>
           取消

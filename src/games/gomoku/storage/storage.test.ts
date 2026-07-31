@@ -1,5 +1,5 @@
 import { createGame, placeStone, replayMoves } from '../core/game'
-import { BOARD_SIZE, type GameState, type Move, type Position } from '../core/types'
+import { BOARD_SIZE, type Cell, type GameState, type Move, type Position } from '../core/types'
 import { STORAGE_VERSION, decodeStoredGame, encodeStoredGame } from './schema'
 import {
   STORAGE_KEY,
@@ -14,6 +14,7 @@ class MemoryStorage implements StorageLike {
   setError: unknown = null
   removeError: unknown = null
   removeCalls = 0
+  setCalls = 0
 
   getItem(key: string): string | null {
     if (this.getError !== null) throw this.getError
@@ -21,6 +22,7 @@ class MemoryStorage implements StorageLike {
   }
 
   setItem(key: string, value: string): void {
+    this.setCalls += 1
     if (this.setError !== null) throw this.setError
     this.values.set(key, value)
   }
@@ -126,12 +128,74 @@ function seedStoredValue(storage: MemoryStorage, value: unknown): void {
   storage.values.set(STORAGE_KEY, JSON.stringify(value))
 }
 
+function inheritProperty<T extends object, K extends keyof T>(source: T, key: K): object {
+  const prototype: object = Object.create(Object.getPrototypeOf(source))
+  Object.defineProperty(prototype, key, { value: source[key] })
+  const candidate: object = Object.create(prototype)
+
+  for (const ownKey of Reflect.ownKeys(source)) {
+    if (ownKey === key) continue
+    const descriptor = Object.getOwnPropertyDescriptor(source, ownKey)
+    if (descriptor === undefined) throw new Error('自有属性应当存在 descriptor')
+    Object.defineProperty(candidate, ownKey, descriptor)
+  }
+
+  return candidate
+}
+
 describe('gomoku storage schema', () => {
   it('使用独立的 version=1 包装棋局状态', () => {
     const state = activeGame()
 
     expect(STORAGE_VERSION).toBe(1)
     expect(encodeStoredGame(state)).toEqual({ version: 1, state })
+  })
+
+  it('编码结果是隔离的 v1 快照且不保留额外字段', () => {
+    const base = winningGame()
+    const board: Cell[] = [...base.board]
+    const history = base.history.map(({ row, col, player }) => ({
+      row,
+      col,
+      player,
+      debug: 'not persisted',
+    }))
+    const winningLines = base.winningLines.map((line) =>
+      line.map(({ row, col }) => ({ row, col, debug: 'not persisted' })),
+    )
+    const state = { ...base, board, history, winningLines, debug: 'not persisted' }
+    const expected = {
+      version: 1,
+      state: {
+        board: [...base.board],
+        currentPlayer: base.currentPlayer,
+        status: base.status,
+        winner: base.winner,
+        winningLines: base.winningLines.map((line) =>
+          line.map(({ row, col }) => ({ row, col })),
+        ),
+        history: base.history.map(({ row, col, player }) => ({ row, col, player })),
+      },
+    }
+
+    const encoded = encodeStoredGame(state)
+    board[0] = null
+    state.currentPlayer = 'white'
+    const firstMove = history[0]
+    if (firstMove === undefined) throw new Error('获胜棋局应当包含落子历史')
+    firstMove.row = 14
+    const firstLine = winningLines[0]
+    const firstPosition = firstLine?.[0]
+    if (firstPosition === undefined) throw new Error('获胜棋局应当包含获胜线坐标')
+    firstPosition.col = 14
+
+    expect(encoded).toEqual(expected)
+    expect(encoded.state).not.toBe(state)
+    expect(encoded.state.board).not.toBe(board)
+    expect(encoded.state.history).not.toBe(history)
+    expect(encoded.state.history[0]).not.toBe(firstMove)
+    expect(encoded.state.winningLines).not.toBe(winningLines)
+    expect(encoded.state.winningLines[0]?.[0]).not.toBe(firstPosition)
   })
 
   it('严格解码有效活动棋局并返回 replay 生成的规范新状态', () => {
@@ -156,6 +220,28 @@ describe('gomoku storage schema', () => {
     { name: '不兼容 version', value: { version: 2, state: activeGame() } },
   ])('拒绝$name', ({ value }) => {
     expect(decodeStoredGame(value)).toBeNull()
+  })
+
+  it.each(['version', 'state'] as const)('拒绝从原型继承顶层 $field', (field) => {
+    const inheritedStoredGame = inheritProperty(encodeStoredGame(activeGame()), field)
+
+    expect(Object.hasOwn(inheritedStoredGame, field)).toBe(false)
+    expect(decodeStoredGame(inheritedStoredGame)).toBeNull()
+  })
+
+  it.each([
+    'board',
+    'currentPlayer',
+    'status',
+    'winner',
+    'winningLines',
+    'history',
+  ] as const)('拒绝从原型继承 state.$field', (field) => {
+    const stored = encodeStoredGame(activeGame())
+    const inheritedState = inheritProperty(stored.state, field)
+
+    expect(Object.hasOwn(inheritedState, field)).toBe(false)
+    expect(decodeStoredGame({ version: 1, state: inheritedState })).toBeNull()
   })
 
   it('拒绝缺少必需字段的状态', () => {
@@ -201,6 +287,34 @@ describe('gomoku storage schema', () => {
     const stored = mutableStoredGame()
     Object.assign(stored.state.history[0] ?? {}, patch)
 
+    expect(decodeStoredGame(stored)).toBeNull()
+  })
+
+  it.each(['row', 'col', 'player'] as const)('拒绝从原型继承 Move.$field', (field) => {
+    const stored = mutableStoredGame()
+    const firstMove = stored.state.history[0]
+    if (firstMove === undefined) throw new Error('活动棋局应当包含首手')
+    const inheritedMove = inheritProperty(firstMove, field)
+    const history: unknown[] = [...stored.state.history]
+    history[0] = inheritedMove
+
+    expect(Object.hasOwn(inheritedMove, field)).toBe(false)
+    expect(
+      decodeStoredGame({ ...stored, state: { ...stored.state, history } }),
+    ).toBeNull()
+  })
+
+  it('拒绝 history 中由私有原型提供 Move 的真实空槽', () => {
+    const stored = mutableStoredGame()
+    const holeIndex = 0
+    const inheritedMove = stored.state.history[holeIndex]
+    const historyPrototype: object = Object.create(Array.prototype)
+    Object.defineProperty(historyPrototype, holeIndex, { value: inheritedMove })
+    Object.setPrototypeOf(stored.state.history, historyPrototype)
+    delete stored.state.history[holeIndex]
+
+    expect(Object.hasOwn(stored.state.history, holeIndex)).toBe(false)
+    expect(stored.state.history[holeIndex]).toBe(inheritedMove)
     expect(decodeStoredGame(stored)).toBeNull()
   })
 
@@ -368,6 +482,21 @@ describe('GomokuStorage', () => {
       ok: false,
       reason: 'unavailable',
     })
+    expect(backing.setCalls).toBe(1)
+  })
+
+  it('编码阶段抛错时继续抛出且不调用 setItem', () => {
+    const backing = new MemoryStorage()
+    const error = new Error('encode failed')
+    const state: GameState = { ...activeGame() }
+    Object.defineProperty(state, 'board', {
+      get: () => {
+        throw error
+      },
+    })
+
+    expect(() => new GomokuStorage(backing).save(state)).toThrow(error)
+    expect(backing.setCalls).toBe(0)
   })
 
   it('清理型 save 的 removeItem 失败时返回 unavailable', () => {

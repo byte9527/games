@@ -51,8 +51,9 @@ export class GomokuStorage implements GomokuStoragePort {
   save(state: GameState): SaveResult {
     if (state.history.length === 0 || state.status !== 'playing') return this.clear()
 
+    const serialized = JSON.stringify(encodeStoredGame(state))
     try {
-      this.storage.setItem(STORAGE_KEY, JSON.stringify(encodeStoredGame(state)))
+      this.storage.setItem(STORAGE_KEY, serialized)
       return { ok: true }
     } catch {
       return { ok: false, reason: 'unavailable' }

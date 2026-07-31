@@ -1,7 +1,12 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { BOARD_SIZE, type Cell, type GameState, type Position } from '../core/types'
 
 type Direction = readonly [rowDelta: number, colDelta: number]
+
+interface PendingKeyboardActivation {
+  readonly index: number
+  readonly historyLength: number
+}
 
 function positionKey({ row, col }: Position): string {
   return `${row}:${col}`
@@ -48,12 +53,24 @@ function findNextPlayableIndex(
   return null
 }
 
+function findNextPlayableAfter(game: GameState, index: number): number {
+  const pointCount = BOARD_SIZE * BOARD_SIZE
+
+  for (let offset = 1; offset <= pointCount; offset += 1) {
+    const candidateIndex = (index + offset) % pointCount
+    if (isPlayable(game, candidateIndex)) return candidateIndex
+  }
+
+  return -1
+}
+
 export function GomokuBoard({ game, onPlace }: {
   game: GameState
   onPlace(position: Position): void
 }) {
   const [tabStopIndex, setTabStopIndex] = useState(() => findFirstPlayableIndex(game))
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const pendingKeyboardActivation = useRef<PendingKeyboardActivation | null>(null)
   const winningPositions = new Set<string>()
   for (const line of game.winningLines) {
     for (const position of line) {
@@ -65,9 +82,28 @@ export function GomokuBoard({ game, onPlace }: {
   const firstPlayableIndex = findFirstPlayableIndex(game)
   const activeTabStopIndex = isPlayable(game, tabStopIndex) ? tabStopIndex : firstPlayableIndex
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const pending = pendingKeyboardActivation.current
+    pendingKeyboardActivation.current = null
+
+    if (pending !== null) {
+      const lastMove = game.history.at(-1)
+      const isExpectedMove =
+        game.history.length === pending.historyLength + 1 &&
+        lastMove?.row === Math.floor(pending.index / BOARD_SIZE) &&
+        lastMove.col === pending.index % BOARD_SIZE &&
+        game.board[pending.index] !== null
+
+      if (isExpectedMove) {
+        const nextIndex = findNextPlayableAfter(game, pending.index)
+        setTabStopIndex(nextIndex)
+        if (nextIndex >= 0) buttonRefs.current[nextIndex]?.focus()
+        return
+      }
+    }
+
     if (tabStopIndex !== activeTabStopIndex) setTabStopIndex(activeTabStopIndex)
-  }, [activeTabStopIndex, tabStopIndex])
+  }, [activeTabStopIndex, game.board, game.history, tabStopIndex])
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
     const direction = directionForKey(event.key)
@@ -79,6 +115,18 @@ export function GomokuBoard({ game, onPlace }: {
 
     setTabStopIndex(nextIndex)
     buttonRefs.current[nextIndex]?.focus()
+  }
+
+  function handleActivate(
+    event: MouseEvent<HTMLButtonElement>,
+    index: number,
+    row: number,
+    col: number,
+  ): void {
+    pendingKeyboardActivation.current = event.detail === 0
+      ? { index, historyLength: game.history.length }
+      : null
+    onPlace({ row, col })
   }
 
   return (
@@ -103,7 +151,7 @@ export function GomokuBoard({ game, onPlace }: {
             data-col={col}
             disabled={disabled}
             key={index}
-            onClick={() => onPlace({ row, col })}
+            onClick={(event) => handleActivate(event, index, row, col)}
             onFocus={() => setTabStopIndex(index)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             ref={(button) => {

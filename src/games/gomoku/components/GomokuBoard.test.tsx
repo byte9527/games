@@ -1,5 +1,6 @@
 import userEvent from '@testing-library/user-event'
 import { render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import { createGame as createCoreGame, placeStone } from '../core/game'
 import { BOARD_SIZE, type Cell, type GameState, type Move, type Position } from '../core/types'
 import { GomokuBoard } from './GomokuBoard'
@@ -70,6 +71,39 @@ const winningDirectionCases = [
     line: Array.from({ length: 5 }, (_, offset) => ({ row: 4 + offset, col: 8 - offset })),
   },
 ] as const
+
+function ControlledGomokuBoard() {
+  const [game, setGame] = useState(createCoreGame)
+
+  function handlePlace(position: Position): void {
+    setGame((currentGame) => {
+      const result = placeStone(currentGame, position)
+      return result.ok ? result.state : currentGame
+    })
+  }
+
+  return <GomokuBoard game={game} onPlace={handlePlace} />
+}
+
+function ExternallyUpdatedGomokuBoard() {
+  const [game, setGame] = useState(createCoreGame)
+
+  function placeExternally(): void {
+    setGame((currentGame) => {
+      const result = placeStone(currentGame, { row: 0, col: 0 })
+      return result.ok ? result.state : currentGame
+    })
+  }
+
+  return (
+    <>
+      <button type="button" onClick={placeExternally}>
+        棋盘外落子
+      </button>
+      <GomokuBoard game={game} onPlace={() => undefined} />
+    </>
+  )
+}
 
 describe('GomokuBoard', () => {
   it('以具名 group 渲染按行优先排列且符合样式契约的 225 个原生按钮', () => {
@@ -201,6 +235,58 @@ describe('GomokuBoard', () => {
     await user.keyboard(' ')
 
     expect(onPlace.mock.calls).toEqual([[{ row: 0, col: 0 }], [{ row: 0, col: 1 }]])
+  })
+
+  it('真实键盘落子后恢复到下一空位并保持方向键流程', async () => {
+    const user = userEvent.setup()
+    render(<ControlledGomokuBoard />)
+
+    await user.tab()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: '第 1 行第 2 列，空位' })).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+    expect(
+      screen.getByRole('button', { name: '第 1 行第 2 列，黑棋，最后一步' }),
+    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: '第 1 行第 3 列，空位' })).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('button', { name: '第 2 行第 3 列，空位' })).toHaveFocus()
+
+    await user.keyboard(' ')
+    expect(
+      screen.getByRole('button', { name: '第 2 行第 3 列，白棋，最后一步' }),
+    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: '第 2 行第 4 列，空位' })).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('button', { name: '第 3 行第 4 列，空位' })).toHaveFocus()
+  })
+
+  it('鼠标落子后不主动把焦点迁移到下一空位', async () => {
+    const user = userEvent.setup()
+    render(<ControlledGomokuBoard />)
+
+    await user.click(screen.getByRole('button', { name: '第 1 行第 1 列，空位' }))
+
+    expect(
+      screen.getByRole('button', { name: '第 1 行第 1 列，黑棋，最后一步' }),
+    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: '第 1 行第 2 列，空位' })).not.toHaveFocus()
+  })
+
+  it('棋盘外更新占用当前 Tab 停靠点时保持外部按钮焦点', async () => {
+    const user = userEvent.setup()
+    render(<ExternallyUpdatedGomokuBoard />)
+
+    const externalButton = screen.getByRole('button', { name: '棋盘外落子' })
+    await user.click(externalButton)
+
+    expect(
+      screen.getByRole('button', { name: '第 1 行第 1 列，黑棋，最后一步' }),
+    ).toBeDisabled()
+    expect(externalButton).toHaveFocus()
   })
 
   it('方向键沿四个方向移动并跳过占用点且不越界循环', async () => {

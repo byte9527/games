@@ -8,7 +8,7 @@ import {
   type Player,
   type Position,
 } from './types'
-import { createGame, placeStone } from './game'
+import { createGame, placeStone, replayMoves, resetGame, undoLastMove } from './game'
 
 function gameWithStones(
   player: Player,
@@ -24,6 +24,58 @@ function gameWithStones(
   }
 
   return { ...createGame(), board, currentPlayer, history }
+}
+
+function playMoves(positions: readonly Position[]): GameState {
+  let state = createGame()
+
+  for (const position of positions) {
+    const result = placeStone(state, position)
+    if (!result.ok) throw new Error(`合法落子应当成功：${result.error}`)
+    state = result.state
+  }
+
+  return state
+}
+
+function winningGame(): GameState {
+  return playMoves([
+    { row: 7, col: 3 },
+    { row: 0, col: 0 },
+    { row: 7, col: 4 },
+    { row: 0, col: 1 },
+    { row: 7, col: 5 },
+    { row: 0, col: 2 },
+    { row: 7, col: 6 },
+    { row: 1, col: 0 },
+    { row: 7, col: 7 },
+  ])
+}
+
+function drawMoves(): readonly Move[] {
+  const blackMoves: Move[] = []
+  const whiteMoves: Move[] = []
+
+  for (let row = 0; row < BOARD_SIZE; row += 1) {
+    for (let col = 0; col < BOARD_SIZE; col += 1) {
+      const player = (Math.floor(row / 2) + col) % 2 === 0 ? 'black' : 'white'
+      const move = { row, col, player } satisfies Move
+      if (player === 'black') blackMoves.push(move)
+      else whiteMoves.push(move)
+    }
+  }
+
+  const moves: Move[] = []
+  for (let index = 0; index < blackMoves.length; index += 1) {
+    const blackMove = blackMoves[index]
+    if (!blackMove) throw new Error('和棋序列应当包含黑棋落子')
+    moves.push(blackMove)
+
+    const whiteMove = whiteMoves[index]
+    if (whiteMove) moves.push(whiteMove)
+  }
+
+  return moves
 }
 
 describe('gomoku game', () => {
@@ -254,5 +306,180 @@ describe('gomoku game', () => {
     expect(result.state.winningLines).toEqual([
       Array.from({ length: 6 }, (_, offset) => ({ row: 14, col: offset + 9 })),
     ])
+  })
+
+  describe('replayMoves', () => {
+    it('重建普通棋局并与逐步落子结果一致', () => {
+      const expected = playMoves([
+        { row: 7, col: 7 },
+        { row: 7, col: 8 },
+        { row: 8, col: 8 },
+      ])
+
+      const replayed = replayMoves(expected.history)
+
+      expect(replayed).toEqual(expected)
+      expect(replayed?.board).not.toBe(expected.board)
+      expect(replayed?.history).not.toBe(expected.history)
+    })
+
+    it('重建获胜棋局并与逐步落子结果一致', () => {
+      const expected = winningGame()
+
+      const replayed = replayMoves(expected.history)
+
+      expect(replayed).toEqual(expected)
+      expect(replayed?.status).toBe('won')
+      expect(replayed?.winner).toBe('black')
+      expect(replayed?.winningLines).toEqual(expected.winningLines)
+    })
+
+    it.each([
+      {
+        name: '玩家顺序错误',
+        moves: [{ row: 7, col: 7, player: 'white' }],
+      },
+      {
+        name: '重复位置',
+        moves: [
+          { row: 7, col: 7, player: 'black' },
+          { row: 7, col: 7, player: 'white' },
+        ],
+      },
+      {
+        name: '越界位置',
+        moves: [{ row: BOARD_SIZE, col: 0, player: 'black' }],
+      },
+      {
+        name: '终局后额外落子',
+        moves: [
+          ...winningGame().history,
+          { row: 14, col: 14, player: 'black' },
+        ],
+      },
+    ] satisfies readonly { name: string; moves: readonly Move[] }[])('拒绝$name', ({ moves }) => {
+      expect(replayMoves(moves)).toBeNull()
+    })
+
+    it('不修改输入的 moves、Move 或 Position', () => {
+      const firstMove = Object.freeze({ row: 7, col: 7, player: 'black' } satisfies Move)
+      const secondMove = Object.freeze({ row: 7, col: 8, player: 'white' } satisfies Move)
+      const moves = Object.freeze([firstMove, secondMove])
+
+      const replayed = replayMoves(moves)
+
+      expect(replayed?.history).toEqual(moves)
+      expect(replayed?.history).not.toBe(moves)
+      expect(replayed?.history[0]).not.toBe(firstMove)
+      expect(moves).toEqual([firstMove, secondMove])
+    })
+  })
+
+  describe('undoLastMove', () => {
+    it('撤销普通一手并保持输入状态不变', () => {
+      const state = playMoves([{ row: 7, col: 7 }])
+      const board = state.board
+      const history = state.history
+
+      const undone = undoLastMove(state)
+
+      expect(undone).not.toBe(state)
+      expect(undone.board[toIndex({ row: 7, col: 7 })]).toBeNull()
+      expect(undone.currentPlayer).toBe('black')
+      expect(undone.history).toEqual([])
+      expect(state.board).toBe(board)
+      expect(state.history).toBe(history)
+      expect(state.board[toIndex({ row: 7, col: 7 })]).toBe('black')
+      expect(state.history).toEqual([{ row: 7, col: 7, player: 'black' }])
+    })
+
+    it('多步棋局只撤销最近一手', () => {
+      const state = playMoves([
+        { row: 7, col: 7 },
+        { row: 7, col: 8 },
+        { row: 8, col: 8 },
+      ])
+      const removedMove = state.history.at(-1)
+      if (!removedMove) throw new Error('多步棋局应当包含最后一手')
+
+      const undone = undoLastMove(state)
+
+      expect(undone.currentPlayer).toBe(removedMove.player)
+      expect(undone.board[toIndex({ row: 7, col: 7 })]).toBe('black')
+      expect(undone.board[toIndex({ row: 7, col: 8 })]).toBe('white')
+      expect(undone.board[toIndex({ row: 8, col: 8 })]).toBeNull()
+      expect(undone.history).toEqual(state.history.slice(0, -1))
+    })
+
+    it('空棋盘情况返回原状态引用', () => {
+      const state = createGame()
+
+      expect(undoLastMove(state)).toBe(state)
+    })
+
+    it('获胜后撤销最后一手并恢复进行中状态', () => {
+      const state = winningGame()
+
+      const undone = undoLastMove(state)
+
+      expect(undone.status).toBe('playing')
+      expect(undone.winner).toBeNull()
+      expect(undone.winningLines).toEqual([])
+      expect(undone.currentPlayer).toBe('black')
+      expect(undone.board[toIndex({ row: 7, col: 7 })]).toBeNull()
+      expect(undone.history).toEqual(state.history.slice(0, -1))
+      expect(state.status).toBe('won')
+      expect(state.board[toIndex({ row: 7, col: 7 })]).toBe('black')
+    })
+
+    it('和棋后撤销最后一手并清除终局结果', () => {
+      const state = replayMoves(drawMoves())
+      if (!state) throw new Error('和棋序列应当能够成功重放')
+      const lastMove = state.history.at(-1)
+      if (!lastMove) throw new Error('和棋应当包含最后一手')
+      expect(state.status).toBe('draw')
+
+      const undone = undoLastMove(state)
+
+      expect(undone.status).toBe('playing')
+      expect(undone.winner).toBeNull()
+      expect(undone.winningLines).toEqual([])
+      expect(undone.currentPlayer).toBe(lastMove.player)
+      expect(undone.board[toIndex(lastMove)]).toBeNull()
+      expect(undone.history).toEqual(state.history.slice(0, -1))
+    })
+
+    it('损坏的 history 与棋局不一致时保留原状态引用', () => {
+      const board: Cell[] = [...createGame().board]
+      board[toIndex({ row: 7, col: 8 })] = 'black'
+      const state: GameState = {
+        ...createGame(),
+        board,
+        currentPlayer: 'white',
+        history: [{ row: 7, col: 7, player: 'black' }],
+      }
+
+      expect(undoLastMove(state)).toBe(state)
+      expect(state.board[toIndex({ row: 7, col: 8 })]).toBe('black')
+      expect(state.history).toEqual([{ row: 7, col: 7, player: 'black' }])
+    })
+  })
+
+  describe('resetGame', () => {
+    it('返回全新且互相独立的初始棋局', () => {
+      const first = resetGame()
+      const second = resetGame()
+
+      expect(first).toEqual(createGame())
+      expect(second).toEqual(createGame())
+      expect(first).not.toBe(second)
+      expect(first.board).not.toBe(second.board)
+      expect(first.history).not.toBe(second.history)
+
+      const moved = placeStone(first, { row: 7, col: 7 })
+      if (!moved.ok) throw new Error('重新开始后的棋局应当允许合法落子')
+      expect(second.board[toIndex({ row: 7, col: 7 })]).toBeNull()
+      expect(second.history).toEqual([])
+    })
   })
 })

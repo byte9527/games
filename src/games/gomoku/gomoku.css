@@ -4,17 +4,17 @@
   text-align: center;
 }
 
-.game-content {
+.gomoku-page .game-content {
   width: 100%;
 }
 
-.game-header {
+.gomoku-page .game-header {
   display: grid;
   gap: 5px;
   margin-bottom: 14px;
 }
 
-.game-header h1 {
+.gomoku-page .game-header h1 {
   margin: 0;
   color: #3f2816;
   font-size: clamp(1.9rem, 8vw, 2.75rem);
@@ -23,7 +23,7 @@
   text-shadow: 0 1px 0 rgb(255 252 239 / 85%);
 }
 
-.back-link {
+.gomoku-page .back-link {
   justify-self: start;
   min-height: 44px;
   display: inline-flex;
@@ -34,12 +34,12 @@
   text-underline-offset: 0.22em;
 }
 
-.back-link::before {
+.gomoku-page .back-link::before {
   content: "←";
   margin-right: 0.35em;
 }
 
-.turn-indicator {
+.gomoku-page .turn-indicator {
   width: fit-content;
   min-height: 34px;
   margin: 2px auto 0;
@@ -53,7 +53,7 @@
   line-height: 1.15;
 }
 
-.gomoku-board {
+.gomoku-page .gomoku-board {
   display: grid;
   grid-template-columns: repeat(15, minmax(0, 1fr));
   grid-template-rows: repeat(15, minmax(0, 1fr));
@@ -76,7 +76,7 @@
   touch-action: manipulation;
 }
 
-.intersection {
+.gomoku-page .intersection {
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -92,8 +92,8 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.intersection::before,
-.intersection::after {
+.gomoku-page .intersection::before,
+.gomoku-page .intersection::after {
   position: absolute;
   z-index: 0;
   content: "";
@@ -101,7 +101,7 @@
   pointer-events: none;
 }
 
-.intersection::before {
+.gomoku-page .intersection::before {
   top: 50%;
   right: 0;
   left: 0;
@@ -109,7 +109,7 @@
   transform: translateY(-0.5px);
 }
 
-.intersection::after {
+.gomoku-page .intersection::after {
   top: 0;
   bottom: 0;
   left: 50%;
@@ -117,35 +117,35 @@
   transform: translateX(-0.5px);
 }
 
-.intersection[data-col="0"]::before {
+.gomoku-page .intersection[data-col="0"]::before {
   left: 50%;
 }
 
-.intersection[data-col="14"]::before {
+.gomoku-page .intersection[data-col="14"]::before {
   right: 50%;
 }
 
-.intersection[data-row="0"]::after {
+.gomoku-page .intersection[data-row="0"]::after {
   top: 50%;
 }
 
-.intersection[data-row="14"]::after {
+.gomoku-page .intersection[data-row="14"]::after {
   bottom: 50%;
 }
 
-.intersection:focus-visible {
+.gomoku-page .intersection:focus-visible {
   z-index: 4;
   outline: 3px solid #fff7d6;
   outline-offset: -3px;
   box-shadow: inset 0 0 0 1px #70471f;
 }
 
-.intersection:disabled {
+.gomoku-page .intersection:disabled {
   cursor: default;
   opacity: 1;
 }
 
-.stone {
+.gomoku-page .stone {
   position: absolute;
   inset: 8%;
   z-index: 2;
@@ -154,25 +154,25 @@
   pointer-events: none;
 }
 
-.stone--black {
+.gomoku-page .stone--black {
   background-color: #151515;
   background-image: radial-gradient(circle at 34% 28%, #626262, #101010 66%, #030303 100%);
   border: 1px solid #050505;
 }
 
-.stone--white {
+.gomoku-page .stone--white {
   background-color: #f3efe5;
   background-image: radial-gradient(circle at 34% 28%, #fff, #ded8ca 70%, #c2b9a8 100%);
   border: 1px solid #8c8271;
 }
 
-.stone--winning {
+.gomoku-page .stone--winning {
   box-shadow:
     0 0 0 3px #c93630,
     0 2px 5px rgb(38 22 10 / 45%);
 }
 
-.last-move {
+.gomoku-page .last-move {
   position: absolute;
   top: 38%;
   left: 38%;
@@ -186,7 +186,7 @@
   pointer-events: none;
 }
 
-.game-controls {
+.gomoku-page .game-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -194,9 +194,7 @@
   margin: 18px auto 0;
 }
 
-.game-controls button,
-.dialog-actions button,
-.dialog-actions a {
+.gomoku-page .game-controls button {
   min-height: 46px;
   padding: 10px 16px;
   color: #402b18;
@@ -213,21 +211,17 @@
   transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
-.game-controls button:hover:not(:disabled),
-.dialog-actions button:hover,
-.dialog-actions a:hover {
+.gomoku-page .game-controls button:hover:not(:disabled) {
   background: #fff1d2;
   border-color: #98672f;
 }
 
-.game-controls button:active:not(:disabled),
-.dialog-actions button:active,
-.dialog-actions a:active {
+.gomoku-page .game-controls button:active:not(:disabled) {
   transform: translateY(1px);
   box-shadow: inset 0 1px 3px rgb(91 55 21 / 18%);
 }
 
-.game-controls button:disabled {
+.gomoku-page .game-controls button:disabled {
   color: #846f59;
   background: #eadfca;
   cursor: not-allowed;
@@ -235,110 +229,66 @@
   box-shadow: none;
 }
 
-.notice-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: min(100%, 680px);
-  margin: 0 auto 12px;
-  padding: 10px 10px 10px 14px;
-  color: #563817;
-  text-align: left;
-  background: #fff2c5;
-  border: 1px solid #d8b56d;
-  border-radius: 12px;
-  box-shadow: 0 5px 14px rgb(91 58 22 / 9%);
-}
-
-.notice-banner button {
-  flex: 0 0 auto;
-  min-width: 44px;
-  min-height: 44px;
-  padding: 8px 10px;
-  color: #573919;
-  background: rgb(255 255 255 / 42%);
-  border: 1px solid rgb(142 95 43 / 38%);
-  border-radius: 10px;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: grid;
-  place-items: center;
-  padding:
-    max(20px, env(safe-area-inset-top))
-    max(20px, env(safe-area-inset-right))
-    max(20px, env(safe-area-inset-bottom))
-    max(20px, env(safe-area-inset-left));
-  background: rgb(35 22 12 / 58%);
-  backdrop-filter: blur(2px);
-}
-
-.dialog-card {
-  width: min(100%, 390px);
-  padding: 24px;
-  color: #3f2b19;
-  text-align: center;
-  background: #fff9ed;
-  border: 1px solid #d8bd91;
-  border-radius: 18px;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 35%);
-}
-
-.dialog-card h2 {
-  margin: 0;
-  color: #3f2816;
-  font-size: 1.5rem;
-}
-
-.dialog-card p {
-  margin: 12px 0 0;
-  color: #6a5138;
-}
-
-.dialog-actions {
-  display: grid;
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.dialog-actions a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
 @media (max-width: 380px) {
-  .gomoku-board {
+  .gomoku-page .gomoku-board {
     padding: 6px;
     border-width: 5px;
     border-radius: 10px;
   }
 
-  .game-header {
+  .gomoku-page .game-header {
     margin-bottom: 10px;
   }
 
-  .game-controls {
+  .gomoku-page .game-controls {
     gap: 8px;
     margin-top: 14px;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-delay: 0ms !important;
-    transition-duration: 0.01ms !important;
-    animation-delay: 0ms !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
+@media (forced-colors: active) {
+  .gomoku-page .gomoku-board {
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+    forced-color-adjust: none;
+  }
+
+  .gomoku-page .intersection::before,
+  .gomoku-page .intersection::after {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .gomoku-page .intersection:focus-visible {
+    outline-color: Highlight;
+    box-shadow: none;
+  }
+
+  .gomoku-page .stone {
+    box-shadow: none;
+    forced-color-adjust: none;
+  }
+
+  .gomoku-page .stone--black {
+    background: CanvasText;
+    border: 2px solid CanvasText;
+  }
+
+  .gomoku-page .stone--white {
+    background: Canvas;
+    border: 3px double CanvasText;
+  }
+
+  .gomoku-page .stone--winning {
+    outline: 3px solid Highlight;
+    outline-offset: 1px;
+  }
+
+  .gomoku-page .last-move {
+    background: Highlight;
+    border: 2px solid HighlightText;
+    box-shadow: none;
+    forced-color-adjust: none;
   }
 }

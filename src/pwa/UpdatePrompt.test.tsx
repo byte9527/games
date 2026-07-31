@@ -93,7 +93,7 @@ describe('UpdatePrompt', () => {
 
     await user.click(screen.getByRole('button', { name: '立即更新' }))
 
-    expect(await screen.findByText('更新失败，请稍后重试。')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('更新失败，请稍后重试。')
     expect(screen.getByRole('button', { name: '立即更新' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '立即更新' }))
     expect(swMocks.updateServiceWorker).toHaveBeenCalledTimes(2)

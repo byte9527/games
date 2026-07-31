@@ -4,11 +4,20 @@ import { ModalDialog } from '../app/ModalDialog'
 import { useInstallPrompt } from './useInstallPrompt'
 
 const IOS_INSTALL_GUIDE = '请在 Safari 中打开分享菜单，然后选择“添加到主屏幕”。'
+const IOS_OTHER_BROWSER_GUIDE = '请打开浏览器分享菜单并选择“添加到主屏幕”；如果没有此选项，请改用 Safari。'
 const OTHER_INSTALL_GUIDE = '请打开浏览器菜单，然后选择“安装应用”或“添加到主屏幕”。'
 
 function isIosDevice(): boolean {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
+function installGuide(): string {
+  if (!isIosDevice()) return OTHER_INSTALL_GUIDE
+  return /Safari/.test(navigator.userAgent) &&
+    !/(CriOS|FxiOS|EdgiOS|OPiOS)/.test(navigator.userAgent)
+    ? IOS_INSTALL_GUIDE
+    : IOS_OTHER_BROWSER_GUIDE
 }
 
 export function InstallPrompt() {
@@ -44,7 +53,7 @@ export function InstallPrompt() {
           onEscape={() => setShowGuide(false)}
           title="安装说明"
         >
-          <p>{isIosDevice() ? IOS_INSTALL_GUIDE : OTHER_INSTALL_GUIDE}</p>
+          <p>{installGuide()}</p>
           <div className="dialog-actions">
             <button
               onClick={() => setShowGuide(false)}

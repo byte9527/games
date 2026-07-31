@@ -87,7 +87,7 @@ export function useInstallPrompt(): InstallPromptState {
       return 'unavailable'
     } finally {
       installingRef.current = false
-      clearPromptEvent()
+      if (promptEventRef.current === event) clearPromptEvent()
     }
   }, [clearPromptEvent, installed])
 

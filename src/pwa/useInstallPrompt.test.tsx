@@ -120,6 +120,37 @@ describe('useInstallPrompt', () => {
     expect(event.prompt).toHaveBeenCalledTimes(1)
   })
 
+  it('旧安装流程结束时保留期间新到达的一次性事件供再次安装', async () => {
+    let resolveOldPrompt: (() => void) | undefined
+    const oldEvent = new InstallPromptEventStub({
+      prompt: vi.fn().mockReturnValue(new Promise<void>((resolve) => {
+        resolveOldPrompt = resolve
+      })),
+    })
+    const newEvent = new InstallPromptEventStub({ outcome: 'dismissed' })
+    const { result } = renderHook(() => useInstallPrompt())
+    dispatchInstallPrompt(oldEvent)
+
+    let oldInstall: Promise<ChoiceOutcome | 'unavailable'> | undefined
+    act(() => {
+      oldInstall = result.current.install()
+    })
+    dispatchInstallPrompt(newEvent)
+    await act(async () => {
+      resolveOldPrompt?.()
+      await oldInstall
+    })
+
+    expect(result.current.canPrompt).toBe(true)
+    let newResult: ChoiceOutcome | 'unavailable' | undefined
+    await act(async () => {
+      newResult = await result.current.install()
+    })
+    expect(newResult).toBe('dismissed')
+    expect(oldEvent.prompt).toHaveBeenCalledTimes(1)
+    expect(newEvent.prompt).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     ['prompt 拒绝', () => new InstallPromptEventStub({
       prompt: vi.fn().mockRejectedValue(new Error('prompt unavailable')),

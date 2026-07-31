@@ -94,7 +94,9 @@ describe('InstallPrompt', () => {
 
   it('iOS 显示精确 Safari 安装说明', async () => {
     const user = userEvent.setup()
-    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
+    )
     render(<InstallPrompt />)
     const trigger = screen.getByRole('button', { name: '如何安装' })
 
@@ -103,6 +105,26 @@ describe('InstallPrompt', () => {
     const dialog = screen.getByRole('dialog', { name: '安装说明' })
     expect(dialog).toHaveTextContent('请在 Safari 中打开分享菜单，然后选择“添加到主屏幕”。')
     expect(screen.getByRole('button', { name: '知道了' })).toHaveFocus()
+  })
+
+  it.each([
+    [
+      'iOS Chrome',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/126.0.0.0 Mobile/15E148 Safari/604.1',
+    ],
+    [
+      'iOS Edge',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 EdgiOS/126.0 Mobile/15E148 Safari/605.1.15',
+    ],
+  ])('%s 使用浏览器中立分享菜单说明和 Safari 兜底', async (_name, userAgent) => {
+    const user = userEvent.setup()
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent)
+    render(<InstallPrompt />)
+
+    await user.click(screen.getByRole('button', { name: '如何安装' }))
+
+    expect(screen.getByRole('dialog', { name: '安装说明' }))
+      .toHaveTextContent('请打开浏览器分享菜单并选择“添加到主屏幕”；如果没有此选项，请改用 Safari。')
   })
 
   it('其他平台显示精确浏览器菜单安装说明', async () => {

@@ -41,7 +41,9 @@ export function UpdatePrompt() {
           {updating ? '更新中…' : '立即更新'}
         </button>
       </div>
-      {updateError === null ? null : <p className="update-prompt__error">{updateError}</p>}
+      {updateError === null ? null : (
+        <p className="update-prompt__error" role="alert">{updateError}</p>
+      )}
     </div>
   )
 }

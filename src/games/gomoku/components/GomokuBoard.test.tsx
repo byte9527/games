@@ -1,5 +1,6 @@
 import userEvent from '@testing-library/user-event'
 import { render, screen, within } from '@testing-library/react'
+import { createGame as createCoreGame, placeStone } from '../core/game'
 import { BOARD_SIZE, type Cell, type GameState, type Move, type Position } from '../core/types'
 import { GomokuBoard } from './GomokuBoard'
 import { TurnIndicator } from './TurnIndicator'
@@ -37,6 +38,38 @@ function positionsInColumn(col: number, startRow: number, length: number): Posit
 function move(position: Position, player: Move['player']): Move {
   return { ...position, player }
 }
+
+function createWinningGame(line: readonly Position[]): GameState {
+  let game = createCoreGame()
+
+  for (const [index, blackPosition] of line.entries()) {
+    const blackResult = placeStone(game, blackPosition)
+    if (!blackResult.ok) throw new Error(`黑棋第 ${index + 1} 手应当合法`)
+    game = blackResult.state
+
+    if (index === line.length - 1) continue
+
+    const whiteResult = placeStone(game, { row: 0, col: index })
+    if (!whiteResult.ok) throw new Error(`白棋第 ${index + 1} 手应当合法`)
+    game = whiteResult.state
+  }
+
+  if (game.status !== 'won') throw new Error('合法五连序列应当产生获胜状态')
+  return game
+}
+
+const winningDirectionCases = [
+  { name: '横向 [0,1]', line: positionsInRow(7, 4, 5) },
+  { name: '竖向 [1,0]', line: positionsInColumn(7, 4, 5) },
+  {
+    name: '主斜线 [1,1]',
+    line: Array.from({ length: 5 }, (_, offset) => ({ row: 4 + offset, col: 4 + offset })),
+  },
+  {
+    name: '副斜线 [1,-1]',
+    line: Array.from({ length: 5 }, (_, offset) => ({ row: 4 + offset, col: 8 - offset })),
+  },
+] as const
 
 describe('GomokuBoard', () => {
   it('以具名 grid 渲染按行优先排列的 225 个原生按钮', () => {
@@ -164,27 +197,29 @@ describe('GomokuBoard', () => {
     expect(container.querySelector('.last-move')).not.toBeInTheDocument()
   })
 
-  it('高亮横向五连且不高亮胜线外棋子', () => {
-    const line = positionsInRow(7, 4, 5)
-    const winningMoves = line.map((position) => move(position, 'black'))
-    const outsideMove = move({ row: 1, col: 1 }, 'white')
+  it.each(winningDirectionCases)('高亮 $name 的完整胜线且不高亮胜线外棋子', ({ line }) => {
+    const game = createWinningGame(line)
     const { container } = render(
-      <GomokuBoard
-        game={createGame({
-          board: createBoard([...winningMoves, outsideMove]),
-          status: 'won',
-          winner: 'black',
-          winningLines: [line],
-          history: [...winningMoves, outsideMove],
-        })}
-        onPlace={vi.fn()}
-      />,
+      <GomokuBoard game={game} onPlace={vi.fn()} />,
     )
 
+    expect(game.winner).toBe('black')
+    expect(game.winningLines).toEqual([line])
     expect(container.querySelectorAll('.stone--winning')).toHaveLength(5)
+
+    for (const position of line) {
+      expect(
+        screen
+          .getByRole('button', {
+            name: `第 ${position.row + 1} 行第 ${position.col + 1} 列，黑棋`,
+          })
+          .querySelector('.stone'),
+      ).toHaveClass('stone--winning')
+    }
+
     expect(
       screen
-        .getByRole('button', { name: '第 2 行第 2 列，白棋' })
+        .getByRole('button', { name: '第 1 行第 1 列，白棋' })
         .querySelector('.stone--winning'),
     ).not.toBeInTheDocument()
   })
@@ -270,7 +305,7 @@ describe('TurnIndicator', () => {
     render(<TurnIndicator game={createGame({ currentPlayer })} />)
 
     const status = screen.getByRole('status')
-    expect(status).toHaveTextContent(expectedText)
+    expect(status.textContent).toBe(expectedText)
     expect(status).toHaveAttribute('aria-live', 'polite')
   })
 
@@ -280,12 +315,12 @@ describe('TurnIndicator', () => {
   ] as const)('显示 %s 方获胜', (winner, expectedText) => {
     render(<TurnIndicator game={createGame({ status: 'won', winner })} />)
 
-    expect(screen.getByRole('status')).toHaveTextContent(expectedText)
+    expect(screen.getByRole('status').textContent).toBe(expectedText)
   })
 
   it('显示和棋', () => {
     render(<TurnIndicator game={createGame({ status: 'draw' })} />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('本局和棋')
+    expect(screen.getByRole('status').textContent).toBe('本局和棋')
   })
 })

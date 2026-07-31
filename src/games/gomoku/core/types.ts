@@ -7,12 +7,12 @@ export type Cell = Player | null
 export type GameStatus = 'playing' | 'won' | 'draw'
 
 export interface Position {
-  row: number
-  col: number
+  readonly row: number
+  readonly col: number
 }
 
 export interface Move extends Position {
-  player: Player
+  readonly player: Player
 }
 
 export interface GameState {

@@ -37,6 +37,45 @@ describe('gomoku game', () => {
   })
 
   it.each([
+    { row: 0, col: 0 },
+    { row: 0, col: BOARD_SIZE - 1 },
+    { row: BOARD_SIZE - 1, col: 0 },
+    { row: BOARD_SIZE - 1, col: BOARD_SIZE - 1 },
+  ])('accepts the corner position $row,$col', (position) => {
+    const state = createGame()
+
+    const result = placeStone(state, position)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('棋盘四角都应当允许落子')
+    expect(result.state.board[position.row * BOARD_SIZE + position.col]).toBe('black')
+  })
+
+  it('preserves both moves and returns the turn to black', () => {
+    const initialState = createGame()
+    const firstMove = placeStone(initialState, { row: 7, col: 7 })
+    if (!firstMove.ok) throw new Error('黑方合法落子应当成功')
+    const firstBoard = firstMove.state.board
+    const firstHistory = firstMove.state.history
+
+    const secondMove = placeStone(firstMove.state, { row: 7, col: 8 })
+
+    expect(secondMove.ok).toBe(true)
+    if (!secondMove.ok) throw new Error('白方合法落子应当成功')
+    expect(secondMove.state.board[7 * BOARD_SIZE + 7]).toBe('black')
+    expect(secondMove.state.board[7 * BOARD_SIZE + 8]).toBe('white')
+    expect(secondMove.state.currentPlayer).toBe('black')
+    expect(secondMove.state.history).toEqual([
+      { row: 7, col: 7, player: 'black' },
+      { row: 7, col: 8, player: 'white' },
+    ])
+    expect(firstMove.state.board).toBe(firstBoard)
+    expect(firstMove.state.history).toBe(firstHistory)
+    expect(firstMove.state.board[7 * BOARD_SIZE + 8]).toBeNull()
+    expect(firstMove.state.history).toEqual([{ row: 7, col: 7, player: 'black' }])
+  })
+
+  it.each([
     { row: -1, col: 0 },
     { row: BOARD_SIZE, col: 0 },
     { row: 0, col: -1 },

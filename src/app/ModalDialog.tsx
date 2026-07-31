@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
+import { createPortal } from 'react-dom'
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -49,6 +50,22 @@ export function ModalDialog({
   const effectVersionRef = useRef(0)
   const hasCapturedFocusRef = useRef(false)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+
+  useLayoutEffect(() => {
+    const root = document.getElementById('root')
+    if (root === null) return
+
+    const previousAriaHidden = root.getAttribute('aria-hidden')
+    const previouslyInert = root.hasAttribute('inert')
+    root.setAttribute('aria-hidden', 'true')
+    root.setAttribute('inert', '')
+
+    return () => {
+      if (previousAriaHidden === null) root.removeAttribute('aria-hidden')
+      else root.setAttribute('aria-hidden', previousAriaHidden)
+      if (!previouslyInert) root.removeAttribute('inert')
+    }
+  }, [])
 
   useLayoutEffect(() => {
     const effectVersion = effectVersionRef.current + 1
@@ -117,7 +134,7 @@ export function ModalDialog({
     else firstElement.focus()
   }
 
-  return (
+  return createPortal(
     <div className="dialog-backdrop" role="presentation">
       <section
         aria-labelledby={titleId}
@@ -130,6 +147,7 @@ export function ModalDialog({
         <h2 id={titleId}>{title}</h2>
         {children}
       </section>
-    </div>
+    </div>,
+    document.body,
   )
 }

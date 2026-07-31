@@ -35,6 +35,56 @@ button:focus-visible {
   padding-bottom: max(24px, env(safe-area-inset-bottom));
   padding-left: max(16px, env(safe-area-inset-left));
 }
+.pwa-controls {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  width: min(100%, 960px);
+  margin: 0 auto 8px;
+}
+.install-prompt > button,
+.update-prompt button {
+  min-height: 42px;
+  padding: 8px 14px;
+  color: #4b3019;
+  background: rgb(255 249 237 / 88%);
+  border: 1px solid #c5a374;
+  border-radius: 999px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.install-prompt > button:disabled,
+.update-prompt button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.update-prompt {
+  display: flex;
+  flex: 1 1 360px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  padding: 8px 10px 8px 14px;
+  color: #563817;
+  background: #fff2c5;
+  border: 1px solid #d8b56d;
+  border-radius: 14px;
+  box-shadow: 0 5px 14px rgb(91 58 22 / 9%);
+}
+.update-prompt__actions {
+  display: flex;
+  gap: 8px;
+}
+.update-prompt__error {
+  flex-basis: 100%;
+  margin: 0;
+  color: #8a2f25;
+  text-align: right;
+}
 .catalog-page { width: min(100%, 960px); margin: 0 auto; }
 .catalog-header { padding: 32px 0 20px; }
 .catalog-header h1 { margin: 4px 0; font-size: clamp(2rem, 9vw, 3.5rem); }

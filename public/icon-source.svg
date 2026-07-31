@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="wood" x1="72" y1="48" x2="438" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f2cf8a"/>
+      <stop offset="0.48" stop-color="#dca65b"/>
+      <stop offset="1" stop-color="#bd7837"/>
+    </linearGradient>
+    <radialGradient id="blackStone" cx="0" cy="0" r="1" gradientTransform="translate(190 181) rotate(49) scale(84)">
+      <stop stop-color="#5b5b58"/>
+      <stop offset="0.38" stop-color="#252522"/>
+      <stop offset="1" stop-color="#090908"/>
+    </radialGradient>
+    <radialGradient id="whiteStone" cx="0" cy="0" r="1" gradientTransform="translate(288 278) rotate(50) scale(90)">
+      <stop stop-color="#fffef8"/>
+      <stop offset="0.7" stop-color="#e9e5da"/>
+      <stop offset="1" stop-color="#bdb7aa"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#4a260f" flood-opacity=".34"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#6f4b2a"/>
+  <rect x="46" y="46" width="420" height="420" rx="82" fill="url(#wood)"/>
+  <path d="M76 113c83-34 177-38 283-12 33 8 58 5 77-9M71 391c101-20 203-15 306 17 24 7 44 7 63 1" fill="none" stroke="#f8dfa9" stroke-opacity=".28" stroke-width="13" stroke-linecap="round"/>
+  <g fill="none" stroke="#70451f" stroke-width="6" stroke-linecap="round" opacity=".72">
+    <path d="M136 136h240M136 196h240M136 256h240M136 316h240M136 376h240"/>
+    <path d="M136 136v240M196 136v240M256 136v240M316 136v240M376 136v240"/>
+  </g>
+  <g filter="url(#shadow)">
+    <circle cx="206" cy="206" r="54" fill="url(#blackStone)" stroke="#090908" stroke-width="5"/>
+    <circle cx="306" cy="306" r="54" fill="url(#whiteStone)" stroke="#8f887b" stroke-width="5"/>
+  </g>
+  <circle cx="188" cy="186" r="11" fill="#fff" opacity=".34"/>
+  <ellipse cx="286" cy="286" rx="17" ry="12" fill="#fff" opacity=".7" transform="rotate(-35 286 286)"/>
+</svg>

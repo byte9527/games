@@ -321,6 +321,8 @@ test('键盘焦点清晰且可用方向键与 Enter 落子', async ({ page }, te
   await openGomoku(page)
 
   await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: /^(如何安装|安装到桌面)$/ })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(page.getByRole('link', { name: '返回小游戏' })).toBeFocused()
   const focusStyle = await page.getByRole('link', { name: '返回小游戏' }).evaluate((link) => {
     const style = getComputedStyle(link)

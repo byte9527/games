@@ -2,6 +2,8 @@ import type { ComponentType } from 'react'
 import { gameCatalog, type GameCatalogItem } from '../games/catalog'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
+import { InstallPrompt } from '../pwa/InstallPrompt'
+import { UpdatePrompt } from '../pwa/UpdatePrompt'
 import { useHashRoute } from './useHashRoute'
 import './app.css'
 
@@ -16,6 +18,10 @@ export function App() {
 
   return (
     <div className="app-shell">
+      <div className="pwa-controls">
+        <InstallPrompt />
+        <UpdatePrompt />
+      </div>
       {GamePage ? <GamePage /> : <GameCatalogPage />}
     </div>
   )

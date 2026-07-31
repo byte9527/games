@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 
-import { ModalDialog } from './ModalDialog'
+import { ModalDialog } from '../../../app/ModalDialog'
 
 export function ConfirmDialog({
   open,

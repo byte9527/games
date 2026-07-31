@@ -15,6 +15,16 @@ function isCell(value: unknown): value is Cell {
   return value === null || isPlayer(value)
 }
 
+function isBoard(value: unknown): value is Cell[] {
+  if (!Array.isArray(value) || value.length !== BOARD_SIZE * BOARD_SIZE) return false
+
+  for (let index = 0; index < BOARD_SIZE * BOARD_SIZE; index += 1) {
+    if (!Object.hasOwn(value, index) || !isCell(value[index])) return false
+  }
+
+  return true
+}
+
 function decodeMove(value: unknown): Move | null {
   if (!isRecord(value)) return null
 
@@ -37,9 +47,7 @@ export function decodeStoredGame(value: unknown): GameState | null {
 
   const { board, currentPlayer, status, winner, winningLines, history } = value.state
   if (
-    !Array.isArray(board) ||
-    board.length !== BOARD_SIZE * BOARD_SIZE ||
-    !board.every(isCell) ||
+    !isBoard(board) ||
     !isPlayer(currentPlayer) ||
     status !== 'playing' ||
     winner !== null ||

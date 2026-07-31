@@ -172,6 +172,20 @@ describe('gomoku storage schema', () => {
     expect(decodeStoredGame(stored)).toBeNull()
   })
 
+  it('拒绝长度为 225 但包含真实空槽的 board', () => {
+    const stored = mutableStoredGame()
+    const holeIndex = 0
+    const inheritedCell = stored.state.board[holeIndex]
+    const boardPrototype: object = Object.create(Array.prototype)
+    Object.defineProperty(boardPrototype, holeIndex, { value: inheritedCell })
+    Object.setPrototypeOf(stored.state.board, boardPrototype)
+    delete stored.state.board[holeIndex]
+
+    expect(Object.hasOwn(stored.state.board, holeIndex)).toBe(false)
+    expect(stored.state.board[holeIndex]).toBe(inheritedCell)
+    expect(decodeStoredGame(stored)).toBeNull()
+  })
+
   it.each([undefined, 'empty', 0, false, {}])('拒绝非法棋盘 cell：%s', (cell) => {
     const stored = mutableStoredGame()
     stored.state.board[0] = cell

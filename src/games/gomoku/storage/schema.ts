@@ -69,14 +69,19 @@ function isCell(value: unknown): value is Cell {
   return value === null || isPlayer(value)
 }
 
-function isBoard(value: unknown): value is Cell[] {
-  if (!Array.isArray(value) || value.length !== BOARD_SIZE * BOARD_SIZE) return false
+function decodeBoard(value: unknown): Cell[] | null {
+  if (!Array.isArray(value) || value.length !== BOARD_SIZE * BOARD_SIZE) return null
+
+  const board: Cell[] = []
 
   for (let index = 0; index < BOARD_SIZE * BOARD_SIZE; index += 1) {
-    if (!hasOwn(value, index) || !isCell(value[index])) return false
+    if (!hasOwn(value, index)) return null
+    const cell = value[index]
+    if (!isCell(cell)) return null
+    board.push(cell)
   }
 
-  return true
+  return board
 }
 
 function decodeMove(value: unknown): Move | null {
@@ -118,16 +123,25 @@ export function decodeStoredGame(value: unknown): GameState | null {
   if (
     !isRecord(value) ||
     !hasRequiredKeys(value, STORED_GAME_KEYS) ||
-    value.version !== STORAGE_VERSION ||
-    !isRecord(value.state) ||
-    !hasRequiredKeys(value.state, GAME_STATE_KEYS)
+    value.version !== STORAGE_VERSION
   ) {
     return null
   }
 
-  const { board, currentPlayer, status, winner, winningLines, history } = value.state
+  const candidate = value.state
+  if (!isRecord(candidate) || !hasRequiredKeys(candidate, GAME_STATE_KEYS)) return null
+
+  const {
+    board: boardValue,
+    currentPlayer,
+    status,
+    winner,
+    winningLines,
+    history,
+  } = candidate
+  const board = decodeBoard(boardValue)
   if (
-    !isBoard(board) ||
+    board === null ||
     !isPlayer(currentPlayer) ||
     status !== 'playing' ||
     winner !== null ||

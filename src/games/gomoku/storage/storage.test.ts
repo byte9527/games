@@ -211,6 +211,23 @@ describe('gomoku storage schema', () => {
     expect(decoded?.history[0]).not.toBe(state.history[0])
   })
 
+  it('只读取一次顶层 state getter 并稳定解码该候选对象', () => {
+    const expected = activeGame()
+    const candidate = encodeStoredGame(expected).state
+    const stored: object = { version: 1 }
+    let reads = 0
+    Object.defineProperty(stored, 'state', {
+      get: () => {
+        reads += 1
+        return reads <= 2 ? candidate : null
+      },
+    })
+
+    expect(Object.hasOwn(stored, 'state')).toBe(true)
+    expect(decodeStoredGame(stored)).toEqual(expected)
+    expect(reads).toBe(1)
+  })
+
   it.each([
     { name: 'null 顶层', value: null },
     { name: '数组顶层', value: [] },
@@ -270,6 +287,21 @@ describe('gomoku storage schema', () => {
     expect(Object.hasOwn(stored.state.board, holeIndex)).toBe(false)
     expect(stored.state.board[holeIndex]).toBe(inheritedCell)
     expect(decodeStoredGame(stored)).toBeNull()
+  })
+
+  it('每个 board cell 只读取一次并使用该值验证 history 一致性', () => {
+    const stored = mutableStoredGame()
+    const index = 7 * BOARD_SIZE + 7
+    let reads = 0
+    Object.defineProperty(stored.state.board, index, {
+      get: () => {
+        reads += 1
+        return reads === 1 ? 'white' : 'black'
+      },
+    })
+
+    expect(decodeStoredGame(stored)).toBeNull()
+    expect(reads).toBe(1)
   })
 
   it.each([undefined, 'empty', 0, false, {}])('拒绝非法棋盘 cell：%s', (cell) => {

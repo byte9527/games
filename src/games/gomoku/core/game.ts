@@ -1,0 +1,34 @@
+import { isInBounds, oppositePlayer, toIndex } from './board'
+import { BOARD_SIZE, type GameState, type MoveResult, type Position } from './types'
+
+export function createGame(): GameState {
+  return {
+    board: Array.from({ length: BOARD_SIZE * BOARD_SIZE }, () => null),
+    currentPlayer: 'black',
+    status: 'playing',
+    winner: null,
+    winningLines: [],
+    history: [],
+  }
+}
+
+export function placeStone(state: GameState, position: Position): MoveResult {
+  if (state.status !== 'playing') return { ok: false, error: 'game-over', state }
+  if (!isInBounds(position)) return { ok: false, error: 'out-of-bounds', state }
+
+  const index = toIndex(position)
+  if (state.board[index] !== null) return { ok: false, error: 'occupied', state }
+
+  const board = [...state.board]
+  board[index] = state.currentPlayer
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      board,
+      currentPlayer: oppositePlayer(state.currentPlayer),
+      history: [...state.history, { ...position, player: state.currentPlayer }],
+    },
+  }
+}

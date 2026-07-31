@@ -253,40 +253,6 @@ export function App() {
 }
 ```
 
-在 `src/app/app.css` 追加：
-
-```css
-.install-prompt { position: fixed; z-index: 6; top: max(12px, env(safe-area-inset-top)); right: 12px; }
-.install-prompt > button, .update-prompt button {
-  min-height: 40px;
-  border: 1px solid #b9925f;
-  border-radius: 999px;
-  padding: 8px 14px;
-  color: #402b18;
-  background: #fff8e8;
-  font-weight: 800;
-}
-.update-prompt {
-  position: fixed;
-  z-index: 7;
-  right: 12px;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  left: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: min(620px, calc(100% - 24px));
-  margin: 0 auto;
-  padding: 12px;
-  border: 1px solid #d0ad78;
-  border-radius: 14px;
-  background: #fff8e8;
-  box-shadow: 0 12px 36px rgb(64 43 24 / 20%);
-}
-```
-
 `src/main.tsx`：
 
 ```tsx
@@ -2091,6 +2057,40 @@ export function App() {
       </div>
     </HashRouter>
   )
+}
+```
+
+在 `src/app/app.css` 追加：
+
+```css
+.install-prompt { position: fixed; z-index: 6; top: max(12px, env(safe-area-inset-top)); right: 12px; }
+.install-prompt > button, .update-prompt button {
+  min-height: 40px;
+  border: 1px solid #b9925f;
+  border-radius: 999px;
+  padding: 8px 14px;
+  color: #402b18;
+  background: #fff8e8;
+  font-weight: 800;
+}
+.update-prompt {
+  position: fixed;
+  z-index: 7;
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: min(620px, calc(100% - 24px));
+  margin: 0 auto;
+  padding: 12px;
+  border: 1px solid #d0ad78;
+  border-radius: 14px;
+  background: #fff8e8;
+  box-shadow: 0 12px 36px rgb(64 43 24 / 20%);
 }
 ```
 

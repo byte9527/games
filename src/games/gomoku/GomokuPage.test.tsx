@@ -339,6 +339,129 @@ describe('GomokuPage', () => {
     await waitFor(() => expect(restoredPoint).toHaveFocus())
   })
 
+  it('结果弹窗打开时隔离背景并阻止底层重新开始', async () => {
+    const user = userEvent.setup()
+    const storage = new FakeStorage({ kind: 'loaded', state: blackNearWin() })
+    const view = render(<GomokuPage storage={storage} />)
+    const restartButton = screen.getByRole('button', { name: '重新开始' })
+    const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
+
+    await user.click(winningPoint)
+
+    const gameContent = view.container.querySelector('.game-content')
+    expect(gameContent).toBeInTheDocument()
+    expect(gameContent).toHaveAttribute('inert')
+    expect(gameContent).toHaveAttribute('aria-hidden', 'true')
+
+    act(() => restartButton.click())
+
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: '黑方获胜' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '重新开始本局？' })).not.toBeInTheDocument()
+    expect(winningPoint).toHaveAccessibleName('第 8 行第 8 列，黑棋，最后一步，获胜连线')
+    expect(winningPoint).toBeDisabled()
+    expect(storage.clearCalls).toBe(0)
+  })
+
+  it('结果弹窗打开时底层悔棋程序化触发无效', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: blackNearWin() }))
+    const backgroundUndo = screen.getByRole('button', { name: '悔棋' })
+    const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
+
+    await user.click(winningPoint)
+    act(() => backgroundUndo.click())
+
+    expect(screen.getByRole('dialog', { name: '黑方获胜' })).toBeInTheDocument()
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(winningPoint).toHaveAccessibleName('第 8 行第 8 列，黑棋，最后一步，获胜连线')
+    expect(winningPoint).toBeDisabled()
+  })
+
+  it('确认弹窗打开时底层棋盘、悔棋和重新开始程序化触发均无效', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: playMoves([{ row: 7, col: 7 }]) }))
+    const backgroundPoint = screen.getByRole('button', { name: '第 8 行第 9 列，空位' })
+    const initialStone = screen.getByRole('button', { name: '第 8 行第 8 列，黑棋，最后一步' })
+    const backgroundUndo = screen.getByRole('button', { name: '悔棋' })
+    const backgroundRestart = screen.getByRole('button', { name: '重新开始' })
+
+    await user.click(backgroundRestart)
+    act(() => backgroundPoint.click())
+
+    expect(backgroundPoint).toHaveAccessibleName('第 8 行第 9 列，空位')
+    expect(screen.getByText('白方回合', { selector: '.turn-indicator' })).toBeInTheDocument()
+
+    act(() => backgroundUndo.click())
+    expect(initialStone).toHaveAccessibleName('第 8 行第 8 列，黑棋，最后一步')
+    expect(initialStone).toBeDisabled()
+
+    act(() => backgroundRestart.click())
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    expect(screen.getByRole('dialog', { name: '重新开始本局？' })).toBeInTheDocument()
+  })
+
+  it('结果优先于同一批次打开的陈旧确认，结果操作后确认不会重现', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: blackNearWin() }))
+    const restartButton = screen.getByRole('button', { name: '重新开始' })
+    const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
+
+    act(() => {
+      restartButton.click()
+      winningPoint.click()
+    })
+
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+    const resultUndo = within(screen.getByRole('dialog', { name: '黑方获胜' }))
+      .getByRole('button', { name: '悔棋一步' })
+    await user.click(resultUndo)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('黑方回合')).toBeInTheDocument()
+  })
+
+  it('焦点程序化进入背景时被拉回当前弹窗首控件', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: playMoves([{ row: 7, col: 7 }]) }))
+    const restartButton = screen.getByRole('button', { name: '重新开始' })
+    const backgroundUndo = screen.getByRole('button', { name: '悔棋' })
+
+    await user.click(restartButton)
+    const cancelButton = screen.getByRole('button', { name: '取消' })
+    expect(cancelButton).toHaveFocus()
+
+    act(() => backgroundUndo.focus())
+
+    expect(cancelButton).toHaveFocus()
+  })
+
+  it('确认弹窗关闭后移除背景隔离并恢复焦点', async () => {
+    const user = userEvent.setup()
+    const view = render(
+      <StrictMode>
+        <GomokuPage
+          storage={new FakeStorage({
+            kind: 'loaded',
+            state: playMoves([{ row: 7, col: 7 }]),
+          })}
+        />
+      </StrictMode>,
+    )
+    const restartButton = screen.getByRole('button', { name: '重新开始' })
+
+    await user.click(restartButton)
+    const gameContent = view.container.querySelector('.game-content')
+    expect(gameContent).toHaveAttribute('inert')
+    expect(gameContent).toHaveAttribute('aria-hidden', 'true')
+
+    await user.click(screen.getByRole('button', { name: '取消' }))
+
+    expect(gameContent).not.toHaveAttribute('inert')
+    expect(gameContent).not.toHaveAttribute('aria-hidden')
+    await waitFor(() => expect(restartButton).toHaveFocus())
+  })
+
   it('结果弹窗把前后 Tab 限制在三个操作内', async () => {
     const user = userEvent.setup()
     renderPage(new FakeStorage({ kind: 'loaded', state: blackWin() }))
@@ -399,6 +522,17 @@ describe('GomokuPage', () => {
     expect(notice).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '关闭提示' }))
     expect(screen.queryByText(message)).not.toBeInTheDocument()
+  })
+
+  it('提示仅把消息放入实时区域，关闭按钮位于相邻位置', () => {
+    renderPage(new FakeStorage({ kind: 'unavailable' }))
+
+    const message = screen.getByText('自动保存不可用，本局仍可继续。')
+    const dismissButton = screen.getByRole('button', { name: '关闭提示' })
+    expect(message).toHaveAttribute('role', 'status')
+    expect(message).toHaveAttribute('aria-live', 'polite')
+    expect(message).not.toContainElement(dismissButton)
+    expect(message.parentElement).toContainElement(dismissButton)
   })
 
   it('保存失败显示提示但不回滚内存棋局', async () => {

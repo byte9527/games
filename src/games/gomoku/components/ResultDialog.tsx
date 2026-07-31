@@ -1,7 +1,7 @@
 import { useRef, type RefObject } from 'react'
 
 import { type GameState } from '../core/types'
-import { ModalDialog } from './ConfirmDialog'
+import { ModalDialog } from './ModalDialog'
 
 function resultTitle(game: GameState): string {
   switch (game.status) {

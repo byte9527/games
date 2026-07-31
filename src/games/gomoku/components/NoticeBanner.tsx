@@ -8,8 +8,8 @@ export function NoticeBanner({
   if (message === null) return null
 
   return (
-    <div className="notice-banner" role="status">
-      <span>{message}</span>
+    <div className="notice-banner">
+      <span aria-live="polite" role="status">{message}</span>
       <button type="button" aria-label="关闭提示" onClick={onDismiss}>
         关闭
       </button>

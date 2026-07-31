@@ -193,6 +193,11 @@ describe('gomoku game', () => {
     expect(result.state.winner).toBeNull()
     expect(result.state.winningLines).toEqual([])
     expect(result.state.currentPlayer).toBe('black')
+
+    const moveAfterDraw = placeStone(result.state, { row: 0, col: 0 })
+
+    expect(moveAfterDraw).toEqual({ ok: false, error: 'game-over', state: result.state })
+    expect(moveAfterDraw.state).toBe(result.state)
   })
 
   it('最后一步同时填满棋盘并获胜时优先判定获胜', () => {

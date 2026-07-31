@@ -1,5 +1,30 @@
-import { BOARD_SIZE, type GameState } from './types'
+import { toIndex } from './board'
+import { findWinningLines } from './win'
+import {
+  BOARD_SIZE,
+  type Cell,
+  type GameState,
+  type Move,
+  type Player,
+  type Position,
+} from './types'
 import { createGame, placeStone } from './game'
+
+function gameWithStones(
+  player: Player,
+  positions: readonly Position[],
+  currentPlayer: Player = player,
+): GameState {
+  const board: Cell[] = Array.from({ length: BOARD_SIZE * BOARD_SIZE }, () => null)
+  const history: Move[] = []
+
+  for (const position of positions) {
+    board[toIndex(position)] = player
+    history.push({ ...position, player })
+  }
+
+  return { ...createGame(), board, currentPlayer, history }
+}
 
 describe('gomoku game', () => {
   it('creates an empty 15×15 game with black to move', () => {
@@ -113,5 +138,83 @@ describe('gomoku game', () => {
 
     expect(result).toEqual({ ok: false, error: 'game-over', state })
     expect(result.state).toBe(state)
+  })
+
+  it('获胜后保留获胜方回合并拒绝继续落子', () => {
+    const winningStones = Array.from({ length: 4 }, (_, col) => ({ row: 7, col: col + 3 }))
+    const state = gameWithStones('black', winningStones)
+
+    const winningMove = placeStone(state, { row: 7, col: 7 })
+
+    expect(winningMove.ok).toBe(true)
+    if (!winningMove.ok) throw new Error('获胜落子应当成功')
+    expect(winningMove.state.status).toBe('won')
+    expect(winningMove.state.winner).toBe('black')
+    expect(winningMove.state.currentPlayer).toBe('black')
+    expect(winningMove.state.winningLines).toEqual([
+      Array.from({ length: 5 }, (_, col) => ({ row: 7, col: col + 3 })),
+    ])
+
+    const result = placeStone(winningMove.state, { row: 0, col: 0 })
+
+    expect(result).toEqual({ ok: false, error: 'game-over', state: winningMove.state })
+    expect(result.state).toBe(winningMove.state)
+  })
+
+  it('满盘无五连时判定和棋并保留最后落子方回合', () => {
+    const finalPosition = { row: 14, col: 13 }
+    const board: Cell[] = []
+    const history: Move[] = []
+
+    for (let row = 0; row < BOARD_SIZE; row += 1) {
+      for (let col = 0; col < BOARD_SIZE; col += 1) {
+        const position = { row, col }
+        if (row === finalPosition.row && col === finalPosition.col) {
+          board.push(null)
+          continue
+        }
+
+        const player = (Math.floor(row / 2) + col) % 2 === 0 ? 'black' : 'white'
+        board.push(player)
+        history.push({ ...position, player })
+      }
+    }
+
+    for (const move of history) {
+      expect(findWinningLines(board, move, move.player)).toEqual([])
+    }
+
+    const state: GameState = { ...createGame(), board, currentPlayer: 'black', history }
+    const result = placeStone(state, finalPosition)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('满盘的最后一步应当成功')
+    expect(result.state.status).toBe('draw')
+    expect(result.state.winner).toBeNull()
+    expect(result.state.winningLines).toEqual([])
+    expect(result.state.currentPlayer).toBe('black')
+  })
+
+  it('最后一步同时填满棋盘并获胜时优先判定获胜', () => {
+    const finalPosition = { row: 14, col: 13 }
+    const board: Cell[] = Array.from({ length: BOARD_SIZE * BOARD_SIZE }, (_, index) => {
+      const row = Math.floor(index / BOARD_SIZE)
+      const col = index % BOARD_SIZE
+      return (Math.floor(row / 2) + col) % 2 === 0 ? 'black' : 'white'
+    })
+    board[toIndex(finalPosition)] = null
+    for (const col of [10, 11, 12, 14]) board[toIndex({ row: 14, col })] = 'black'
+
+    const state: GameState = { ...createGame(), board, currentPlayer: 'black' }
+    const result = placeStone(state, finalPosition)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('满盘获胜的最后一步应当成功')
+    expect(result.state.status).toBe('won')
+    expect(result.state.winner).toBe('black')
+    expect(result.state.currentPlayer).toBe('black')
+    expect(result.state.winningLines).toEqual([
+      Array.from({ length: 6 }, (_, offset) => ({ row: 14, col: offset + 9 })),
+    ])
   })
 })

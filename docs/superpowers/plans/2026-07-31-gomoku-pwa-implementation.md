@@ -346,6 +346,7 @@ git push -u origin HEAD
 - Create: `src/games/gomoku/GomokuPage.tsx`
 - Create: `src/app/useHashRoute.ts`
 - Modify: `src/app/App.tsx`
+- Modify: `src/app/App.test.tsx`
 - Modify: `src/app/app.css`
 
 - [ ] **Step 1: 写合集导航失败测试**
@@ -357,6 +358,10 @@ import userEvent from '@testing-library/user-event'
 import { render, screen, waitFor } from '@testing-library/react'
 import { App } from '../app/App'
 
+afterEach(() => {
+  window.location.hash = ''
+})
+
 describe('game catalog', () => {
   it('opens gomoku from the catalog', async () => {
     window.location.hash = '#/'
@@ -364,12 +369,48 @@ describe('game catalog', () => {
     render(<App />)
 
     expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
-    await user.click(screen.getByRole('link', { name: /五子棋/ }))
+    const gomokuLink = screen.getByRole('link', { name: /五子棋/ })
+    expect(screen.getByRole('list', { name: '游戏列表' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '五子棋', level: 2 })).toBeInTheDocument()
+    await user.click(gomokuLink)
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: '五子棋' })).toBeInTheDocument()
       expect(window.location.hash).toBe('#/games/gomoku')
     })
+
+    await user.click(screen.getByRole('link', { name: '返回小游戏' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
+      expect(window.location.hash).toBe('#/')
+    })
+  })
+})
+```
+
+`src/app/App.test.tsx` 补充未知 hash 回退，并在每个测试后清理 hash：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { App } from './App'
+
+afterEach(() => {
+  window.location.hash = ''
+})
+
+describe('App', () => {
+  it('renders the game collection heading', () => {
+    window.location.hash = '#/'
+    render(<App />)
+    expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
+  })
+
+  it('falls back to the catalog for an unknown hash', () => {
+    window.location.hash = '#/missing'
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
   })
 })
 ```
@@ -415,15 +456,17 @@ export function GameCatalogPage() {
         <h1>小游戏</h1>
         <p>没有广告，打开就玩。</p>
       </header>
-      <section className="game-grid" aria-label="游戏列表">
+      <ul className="game-grid" aria-label="游戏列表">
         {gameCatalog.map((game) => (
-          <a className="game-card" href={`#${game.path}`} key={game.id}>
-            <span className="game-card__icon" aria-hidden="true">● ○</span>
-            <strong>{game.title}</strong>
-            <span>{game.description}</span>
-          </a>
+          <li key={game.id}>
+            <a className="game-card" href={`#${game.path}`}>
+              <span className="game-card__icon" aria-hidden="true">● ○</span>
+              <h2>{game.title}</h2>
+              <span>{game.description}</span>
+            </a>
+          </li>
         ))}
-      </section>
+      </ul>
     </main>
   )
 }
@@ -463,17 +506,25 @@ export function useHashRoute() {
 `src/app/App.tsx`：
 
 ```tsx
+import type { ComponentType } from 'react'
+import { gameCatalog, type GameCatalogItem } from '../games/catalog'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
 import { useHashRoute } from './useHashRoute'
 import './app.css'
 
+const gamePages: Record<GameCatalogItem['id'], ComponentType> = {
+  gomoku: GomokuPage,
+}
+
 export function App() {
   const route = useHashRoute()
+  const activeGame = gameCatalog.find((game) => game.path === route)
+  const GamePage = activeGame ? gamePages[activeGame.id] : null
 
   return (
     <div className="app-shell">
-      {route === '/games/gomoku' ? <GomokuPage /> : <GameCatalogPage />}
+      {GamePage ? <GamePage /> : <GameCatalogPage />}
     </div>
   )
 }
@@ -486,8 +537,9 @@ export function App() {
 .catalog-header { padding: 32px 0 20px; }
 .catalog-header h1 { margin: 4px 0; font-size: clamp(2rem, 9vw, 3.5rem); }
 .eyebrow { margin: 0; color: #8a5c2d; font-weight: 700; }
-.game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-.game-card { display: grid; gap: 8px; min-height: 180px; padding: 22px; color: inherit; text-decoration: none; background: #fff9ed; border: 1px solid #d8bd91; border-radius: 20px; box-shadow: 0 12px 30px rgb(82 52 24 / 10%); }
+.game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.game-grid > li { display: flex; }
+.game-card { display: grid; flex: 1; gap: 8px; min-height: 180px; padding: 22px; color: inherit; text-decoration: none; background: #fff9ed; border: 1px solid #d8bd91; border-radius: 20px; box-shadow: 0 12px 30px rgb(82 52 24 / 10%); }
 .game-card__icon { font-size: 2rem; }
 ```
 
@@ -2053,6 +2105,8 @@ export function UpdatePrompt() {
 将 `App.tsx` 调整为：
 
 ```tsx
+import type { ComponentType } from 'react'
+import { gameCatalog, type GameCatalogItem } from '../games/catalog'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
 import { InstallPrompt } from '../pwa/InstallPrompt'
@@ -2060,13 +2114,19 @@ import { UpdatePrompt } from '../pwa/UpdatePrompt'
 import { useHashRoute } from './useHashRoute'
 import './app.css'
 
+const gamePages: Record<GameCatalogItem['id'], ComponentType> = {
+  gomoku: GomokuPage,
+}
+
 export function App() {
   const route = useHashRoute()
+  const activeGame = gameCatalog.find((game) => game.path === route)
+  const GamePage = activeGame ? gamePages[activeGame.id] : null
 
   return (
     <div className="app-shell">
       <InstallPrompt />
-      {route === '/games/gomoku' ? <GomokuPage /> : <GameCatalogPage />}
+      {GamePage ? <GamePage /> : <GameCatalogPage />}
       <UpdatePrompt />
     </div>
   )

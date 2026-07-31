@@ -14,6 +14,7 @@ button, a { font: inherit; }
 .catalog-header { padding: 32px 0 20px; }
 .catalog-header h1 { margin: 4px 0; font-size: clamp(2rem, 9vw, 3.5rem); }
 .eyebrow { margin: 0; color: #8a5c2d; font-weight: 700; }
-.game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-.game-card { display: grid; gap: 8px; min-height: 180px; padding: 22px; color: inherit; text-decoration: none; background: #fff9ed; border: 1px solid #d8bd91; border-radius: 20px; box-shadow: 0 12px 30px rgb(82 52 24 / 10%); }
+.game-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.game-grid > li { display: flex; }
+.game-card { display: grid; flex: 1; gap: 8px; min-height: 180px; padding: 22px; color: inherit; text-decoration: none; background: #fff9ed; border: 1px solid #d8bd91; border-radius: 20px; box-shadow: 0 12px 30px rgb(82 52 24 / 10%); }
 .game-card__icon { font-size: 2rem; }

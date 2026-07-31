@@ -11,4 +11,11 @@ describe('App', () => {
     render(<App />)
     expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
   })
+
+  it('falls back to the catalog for an unknown hash', () => {
+    window.location.hash = '#/missing'
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
+  })
 })

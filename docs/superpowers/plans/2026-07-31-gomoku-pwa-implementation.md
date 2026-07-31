@@ -163,11 +163,14 @@ Run:
 
 ```bash
 npm install react react-dom
-npm install -D typescript vite @vitejs/plugin-react @types/node@22 @types/react @types/react-dom vitest jsdom@26.1.0 @testing-library/react @testing-library/jest-dom @testing-library/user-event @playwright/test vite-plugin-pwa sharp
+npm install -D typescript vite @vitejs/plugin-react @types/react @types/react-dom vitest jsdom@26.1.0 @testing-library/react @testing-library/jest-dom @testing-library/user-event @playwright/test vite-plugin-pwa sharp
+npm install -D --save-exact @types/node@22.9.0
 npx playwright install chromium
 ```
 
 Expected: 命令退出码为 0，`package-lock.json` 和 `node_modules/` 已生成。
+
+`@types/node@22.9.0` 必须精确匹配 `engines.node` 支持的最低 Node 22.9.0，避免类型声明接受较新 Node 22 小版本才提供的运行时 API。`jsdom@26.1.0` 保持与该 Node 版本兼容。
 
 - [ ] **Step 3: 配置 Vite 和 Vitest**
 

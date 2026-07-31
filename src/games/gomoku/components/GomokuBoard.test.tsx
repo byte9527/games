@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { createGame as createCoreGame, placeStone } from '../core/game'
 import { BOARD_SIZE, type Cell, type GameState, type Move, type Position } from '../core/types'
 import { GomokuBoard } from './GomokuBoard'
@@ -72,10 +72,10 @@ const winningDirectionCases = [
 ] as const
 
 describe('GomokuBoard', () => {
-  it('以具名 grid 渲染按行优先排列的 225 个原生按钮', () => {
+  it('以具名 group 渲染按行优先排列且符合样式契约的 225 个原生按钮', () => {
     render(<GomokuBoard game={createGame()} onPlace={vi.fn()} />)
 
-    const board = screen.getByRole('grid', { name: '十五乘十五五子棋棋盘' })
+    const board = screen.getByRole('group', { name: '十五乘十五五子棋棋盘' })
     const points = within(board).getAllByRole('button')
 
     expect(points).toHaveLength(225)
@@ -83,6 +83,38 @@ describe('GomokuBoard', () => {
     expect(points[7 * BOARD_SIZE + 7]).toHaveAccessibleName('第 8 行第 8 列，空位')
     expect(points[224]).toHaveAccessibleName('第 15 行第 15 列，空位')
     expect(points.every((point) => point.tagName === 'BUTTON')).toBe(true)
+    expect(points.every((point) => point.classList.contains('intersection'))).toBe(true)
+    expect(points[0]).toHaveAttribute('data-row', '0')
+    expect(points[0]).toHaveAttribute('data-col', '0')
+    expect(points[224]).toHaveAttribute('data-row', '14')
+    expect(points[224]).toHaveAttribute('data-col', '14')
+  })
+
+  it('仅保留一个行优先的空位 Tab 停靠点', async () => {
+    const user = userEvent.setup()
+    const occupied = [move({ row: 0, col: 0 }, 'black'), move({ row: 0, col: 1 }, 'white')]
+    render(
+      <>
+        <GomokuBoard
+          game={createGame({ board: createBoard(occupied), history: occupied })}
+          onPlace={vi.fn()}
+        />
+        <button type="button">棋盘后按钮</button>
+      </>,
+    )
+
+    const board = screen.getByRole('group', { name: '十五乘十五五子棋棋盘' })
+    const points = within(board).getAllByRole('button')
+    const firstPlayablePoint = within(board).getByRole('button', {
+      name: '第 1 行第 3 列，空位',
+    })
+
+    expect(points.filter((point) => point.tabIndex === 0)).toEqual([firstPlayablePoint])
+
+    await user.tab()
+    expect(firstPlayablePoint).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '棋盘后按钮' })).toHaveFocus()
   })
 
   it('点击中心和四角空位时回调对应的零基行列', async () => {
@@ -121,7 +153,9 @@ describe('GomokuBoard', () => {
     )
 
     const blackPoint = screen.getByRole('button', { name: '第 4 行第 5 列，黑棋' })
-    const whitePoint = screen.getByRole('button', { name: '第 10 行第 11 列，白棋' })
+    const whitePoint = screen.getByRole('button', {
+      name: '第 10 行第 11 列，白棋，最后一步',
+    })
 
     expect(blackPoint).toBeDisabled()
     expect(whitePoint).toBeDisabled()
@@ -148,22 +182,76 @@ describe('GomokuBoard', () => {
 
     const points = screen.getAllByRole('button')
     expect(points.every((point) => point.hasAttribute('disabled'))).toBe(true)
+    expect(points.every((point) => point.tabIndex === -1)).toBe(true)
 
     await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
     expect(onPlace).not.toHaveBeenCalled()
   })
 
-  it('允许用 Enter 和 Space 操作进行中的空位按钮', async () => {
+  it('通过实际 Tab 和方向键导航后用 Enter 与 Space 激活空位', async () => {
     const user = userEvent.setup()
     const onPlace = vi.fn()
     render(<GomokuBoard game={createGame()} onPlace={onPlace} />)
 
-    screen.getByRole('button', { name: '第 2 行第 3 列，空位' }).focus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: '第 1 行第 1 列，空位' })).toHaveFocus()
     await user.keyboard('{Enter}')
-    screen.getByRole('button', { name: '第 5 行第 7 列，空位' }).focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: '第 1 行第 2 列，空位' })).toHaveFocus()
     await user.keyboard(' ')
 
-    expect(onPlace.mock.calls).toEqual([[{ row: 1, col: 2 }], [{ row: 4, col: 6 }]])
+    expect(onPlace.mock.calls).toEqual([[{ row: 0, col: 0 }], [{ row: 0, col: 1 }]])
+  })
+
+  it('方向键沿四个方向移动并跳过占用点且不越界循环', async () => {
+    const user = userEvent.setup()
+    const occupied = [move({ row: 0, col: 1 }, 'black'), move({ row: 1, col: 2 }, 'white')]
+    render(
+      <GomokuBoard
+        game={createGame({ board: createBoard(occupied), history: occupied })}
+        onPlace={vi.fn()}
+      />,
+    )
+
+    const topLeft = screen.getByRole('button', { name: '第 1 行第 1 列，空位' })
+    await user.tab()
+    expect(topLeft).toHaveFocus()
+
+    await user.keyboard('{ArrowLeft}{ArrowUp}')
+    expect(topLeft).toHaveFocus()
+
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: '第 1 行第 3 列，空位' })).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByRole('button', { name: '第 3 行第 3 列，空位' })).toHaveFocus()
+    await user.keyboard('{ArrowLeft}')
+    expect(screen.getByRole('button', { name: '第 3 行第 2 列，空位' })).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(screen.getByRole('button', { name: '第 2 行第 2 列，空位' })).toHaveFocus()
+  })
+
+  it('当前 Tab 停靠点变为占用后恢复到行优先第一个可落子点', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<GomokuBoard game={createGame()} onPlace={vi.fn()} />)
+
+    await user.tab()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: '第 1 行第 2 列，空位' })).toHaveFocus()
+
+    const placedMove = move({ row: 0, col: 1 }, 'black')
+    rerender(
+      <GomokuBoard
+        game={createGame({ board: createBoard([placedMove]), history: [placedMove] })}
+        onPlace={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '第 1 行第 1 列，空位' }).tabIndex).toBe(0)
+    })
+    expect(
+      screen.getByRole('button', { name: '第 1 行第 2 列，黑棋，最后一步' }),
+    ).toBeDisabled()
   })
 
   it('仅在 history 最后一手位置渲染不参与可访问名称的标记', () => {
@@ -179,7 +267,9 @@ describe('GomokuBoard', () => {
     let markers = container.querySelectorAll('.last-move')
     expect(markers).toHaveLength(1)
     expect(markers[0]).toHaveAttribute('aria-hidden', 'true')
-    expect(markers[0]?.closest('button')).toHaveAccessibleName('第 9 行第 10 列，白棋')
+    expect(markers[0]?.closest('button')).toHaveAccessibleName(
+      '第 9 行第 10 列，白棋，最后一步',
+    )
 
     const next = move({ row: 12, col: 13 }, 'black')
     rerender(
@@ -191,7 +281,9 @@ describe('GomokuBoard', () => {
 
     markers = container.querySelectorAll('.last-move')
     expect(markers).toHaveLength(1)
-    expect(markers[0]?.closest('button')).toHaveAccessibleName('第 13 行第 14 列，黑棋')
+    expect(markers[0]?.closest('button')).toHaveAccessibleName(
+      '第 13 行第 14 列，黑棋，最后一步',
+    )
 
     rerender(<GomokuBoard game={createGame()} onPlace={vi.fn()} />)
     expect(container.querySelector('.last-move')).not.toBeInTheDocument()
@@ -208,13 +300,17 @@ describe('GomokuBoard', () => {
     expect(container.querySelectorAll('.stone--winning')).toHaveLength(5)
 
     for (const position of line) {
-      expect(
-        screen
-          .getByRole('button', {
-            name: `第 ${position.row + 1} 行第 ${position.col + 1} 列，黑棋`,
-          })
-          .querySelector('.stone'),
-      ).toHaveClass('stone--winning')
+      const lastMove = game.history.at(-1)
+      const lastMoveText = lastMove?.row === position.row && lastMove.col === position.col
+        ? '，最后一步'
+        : ''
+      const stone = screen
+        .getByRole('button', {
+          name: `第 ${position.row + 1} 行第 ${position.col + 1} 列，黑棋${lastMoveText}，获胜连线`,
+        })
+        .querySelector('.stone')
+      expect(stone).toHaveClass('stone--winning')
+      expect(stone).toHaveAttribute('aria-hidden', 'true')
     }
 
     expect(
@@ -267,9 +363,24 @@ describe('GomokuBoard', () => {
     expect(container.querySelectorAll('.stone--winning')).toHaveLength(9)
     expect(
       screen
-        .getByRole('button', { name: '第 8 行第 8 列，黑棋' })
+        .getByRole('button', { name: '第 8 行第 8 列，黑棋，获胜连线' })
         .querySelectorAll('.stone.stone--black.stone--winning'),
     ).toHaveLength(1)
+  })
+
+  it('每次激活都向 onPlace 传入新的坐标对象', async () => {
+    const user = userEvent.setup()
+    const onPlace = vi.fn<(position: Position) => void>()
+    render(<GomokuBoard game={createGame()} onPlace={onPlace} />)
+
+    await user.tab()
+    await user.keyboard('{Enter}{Enter}')
+
+    const firstPosition = onPlace.mock.calls[0]?.[0]
+    const secondPosition = onPlace.mock.calls[1]?.[0]
+    expect(firstPosition).toEqual({ row: 0, col: 0 })
+    expect(secondPosition).toEqual({ row: 0, col: 0 })
+    expect(firstPosition).not.toBe(secondPosition)
   })
 
   it('渲染与交互不会修改传入状态的引用或内容', async () => {
@@ -307,6 +418,7 @@ describe('TurnIndicator', () => {
     const status = screen.getByRole('status')
     expect(status.textContent).toBe(expectedText)
     expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveClass('turn-indicator')
   })
 
   it.each([
@@ -322,5 +434,11 @@ describe('TurnIndicator', () => {
     render(<TurnIndicator game={createGame({ status: 'draw' })} />)
 
     expect(screen.getByRole('status').textContent).toBe('本局和棋')
+  })
+
+  it('获胜状态缺少 winner 时显示明确异常', () => {
+    render(<TurnIndicator game={createGame({ status: 'won', winner: null })} />)
+
+    expect(screen.getByRole('status').textContent).toBe('棋局状态异常')
   })
 })

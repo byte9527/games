@@ -1,6 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import { App } from './App'
 
+afterEach(() => {
+  window.location.hash = ''
+})
+
 describe('App', () => {
   it('renders the game collection heading', () => {
     window.location.hash = '#/'

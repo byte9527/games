@@ -147,14 +147,16 @@ export function decodeStoredGame(value: unknown): GameState | null {
     winner !== null ||
     !Array.isArray(winningLines) ||
     winningLines.length !== 0 ||
-    !Array.isArray(history) ||
-    history.length === 0
+    !Array.isArray(history)
   ) {
     return null
   }
 
+  const historyLength = history.length
+  if (historyLength === 0) return null
+
   const moves: Move[] = []
-  for (let index = 0; index < history.length; index += 1) {
+  for (let index = 0; index < historyLength; index += 1) {
     if (!hasOwn(history, index)) return null
     const move = decodeMove(history[index])
     if (move === null) return null

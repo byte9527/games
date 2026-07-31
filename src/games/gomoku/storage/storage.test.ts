@@ -385,6 +385,24 @@ describe('gomoku storage schema', () => {
     expect(decodeStoredGame(stored)).toBeNull()
   })
 
+  it('只读取一次 history.length 并使用该长度完成非空与索引校验', () => {
+    const stored = encodeStoredGame(createGame())
+    const target: unknown[] = []
+    let reads = 0
+    const history = new Proxy(target, {
+      get: (array, property, receiver) => {
+        if (property === 'length') {
+          reads += 1
+          return reads === 1 ? 1 : 0
+        }
+        return Reflect.get(array, property, receiver)
+      },
+    })
+
+    expect(decodeStoredGame({ ...stored, state: { ...stored.state, history } })).toBeNull()
+    expect(reads).toBe(1)
+  })
+
   it.each([
     { name: '重复位置', moves: [{ row: 7, col: 7, player: 'black' }, { row: 7, col: 7, player: 'white' }] },
     { name: '越界位置', moves: [{ row: BOARD_SIZE, col: 0, player: 'black' }] },

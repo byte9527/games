@@ -141,6 +141,15 @@ test('数独存档可在离线重载后恢复并继续输入与撤销', async ({
     const toggle = page.getByRole('button', { name: '音乐' })
     await expect(toggle).toBeVisible()
     await expect(toggle).toBeEnabled()
+    const initialMusicState = await toggle.getAttribute('aria-pressed')
+    if (initialMusicState !== 'true' && initialMusicState !== 'false') {
+      throw new Error('音乐开关缺少稳定的 aria-pressed 状态')
+    }
+    const toggledMusicState = initialMusicState === 'true' ? 'false' : 'true'
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', toggledMusicState)
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', initialMusicState)
 
     await sudokuCell(page, offlineCandidateCell).click()
     await page.getByRole('button', { name: '数字 3', exact: true }).click()

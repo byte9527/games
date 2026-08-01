@@ -418,7 +418,12 @@ for (const viewport of [
     )
     await expect(independentControls).toHaveCount(17)
     for (let index = 0; index < 17; index += 1) {
-      await expect(independentControls.nth(index)).toBeVisible()
+      const control = independentControls.nth(index)
+      await expect(control).toBeVisible()
+      const bounds = await control.boundingBox()
+      expect(bounds).not.toBeNull()
+      expect(bounds?.width ?? 0).toBeGreaterThanOrEqual(44)
+      expect(bounds?.height ?? 0).toBeGreaterThanOrEqual(44)
     }
 
     const metrics = await page.evaluate(() => {
@@ -473,7 +478,7 @@ for (const viewport of [
     expect(metrics.numberPad?.right ?? Infinity).toBeLessThanOrEqual(metrics.viewportWidth)
     expect(metrics.controls).toHaveLength(17)
     expect(Math.min(...metrics.controls.map(({ height }) => height))).toBeGreaterThanOrEqual(44)
-    expect(Math.min(...metrics.controls.map(({ width }) => width))).toBeGreaterThan(0)
+    expect(Math.min(...metrics.controls.map(({ width }) => width))).toBeGreaterThanOrEqual(44)
     expect(Math.min(...metrics.controls.map(({ left }) => left))).toBeGreaterThanOrEqual(0)
     expect(Math.max(...metrics.controls.map(({ right }) => right))).toBeLessThanOrEqual(
       metrics.viewportWidth,

@@ -92,6 +92,46 @@ function setVisibilityState(value: DocumentVisibilityState) {
   fireEvent(document, new Event('visibilitychange'))
 }
 
+type DocumentListenerCall = readonly [
+  type: string,
+  listener: EventListenerOrEventListenerObject,
+  options?: boolean | AddEventListenerOptions,
+]
+
+function countActiveCaptureListeners(
+  eventType: 'pointerdown' | 'keydown',
+  addCalls: readonly DocumentListenerCall[],
+  removeCalls: readonly DocumentListenerCall[],
+): number {
+  const listenerBalances = new Map<EventListenerOrEventListenerObject, number>()
+
+  for (const [type, listener, options] of addCalls) {
+    if (type === eventType && options === true) {
+      listenerBalances.set(listener, (listenerBalances.get(listener) ?? 0) + 1)
+    }
+  }
+  for (const [type, listener, options] of removeCalls) {
+    if (type === eventType && options === true) {
+      listenerBalances.set(listener, (listenerBalances.get(listener) ?? 0) - 1)
+    }
+  }
+
+  return [...listenerBalances.values()].reduce((total, balance) => total + Math.max(balance, 0), 0)
+}
+
+function readQueuedError(callbacks: readonly VoidFunction[]): unknown {
+  expect(callbacks).toHaveLength(1)
+  const callback = callbacks[0]
+  if (callback === undefined) throw new Error('预期存在一个排队的全局错误回调')
+
+  try {
+    callback()
+  } catch (error) {
+    return error
+  }
+  throw new Error('全局错误回调没有抛出异常')
+}
+
 beforeEach(() => {
   window.localStorage.clear()
 })
@@ -136,8 +176,10 @@ describe('AudioProvider', () => {
     const engine = createEngine()
     vi.mocked(engine.unlock).mockReturnValue(deferred.promise)
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    const removeEventListener = vi.spyOn(document, 'removeEventListener')
 
-    render(
+    const view = render(
       <StrictMode>
         <AudioProvider engineFactory={engineFactory} storage={createStorage()}>
           <ControllerHarness />
@@ -145,11 +187,24 @@ describe('AudioProvider', () => {
       </StrictMode>,
     )
 
+    expect(
+      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(1)
+    expect(
+      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(1)
+
     fireEvent.pointerDown(document)
     fireEvent.keyDown(document)
 
     expect(engineFactory).toHaveBeenCalledTimes(1)
     expect(engine.unlock).toHaveBeenCalledTimes(1)
+    expect(
+      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(1)
+    expect(
+      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(1)
 
     await act(async () => {
       deferred.resolve({ ok: true })
@@ -158,6 +213,14 @@ describe('AudioProvider', () => {
 
     expect(engine.play).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
+
+    view.unmount()
+    expect(
+      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(0)
+    expect(
+      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(0)
   })
 
   it('解锁被阻止时保持 locked 且允许下一次事件重试', async () => {
@@ -419,6 +482,69 @@ describe('AudioProvider', () => {
 
     expect(engine.play).not.toHaveBeenCalled()
     expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('卸载时 stop 抛错仍释放引擎，并在 dispose 成功后上报 stop 错误', async () => {
+    const stopError = new Error('stop failed')
+    const queuedCallbacks: VoidFunction[] = []
+    const engine = createEngine()
+    vi.mocked(engine.stop).mockImplementation(() => {
+      throw stopError
+    })
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      fireEvent.pointerDown(document)
+    })
+    vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
+      queuedCallbacks.push(callback)
+    })
+    view.unmount()
+    await Promise.resolve()
+
+    expect(engine.stop).toHaveBeenCalledTimes(1)
+    expect(engine.dispose).toHaveBeenCalledTimes(1)
+    expect(readQueuedError(queuedCallbacks)).toBe(stopError)
+  })
+
+  it('卸载时 stop 与 dispose 都失败会用 AggregateError 保留并上报两个错误', async () => {
+    const stopError = new Error('stop failed')
+    const disposeError = new Error('dispose failed')
+    const queuedCallbacks: VoidFunction[] = []
+    const engine = createEngine()
+    vi.mocked(engine.stop).mockImplementation(() => {
+      throw stopError
+    })
+    vi.mocked(engine.dispose).mockImplementation(() => {
+      throw disposeError
+    })
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      fireEvent.pointerDown(document)
+    })
+    vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
+      queuedCallbacks.push(callback)
+    })
+    view.unmount()
+    await Promise.resolve()
+
+    expect(engine.stop).toHaveBeenCalledTimes(1)
+    expect(engine.dispose).toHaveBeenCalledTimes(1)
+    const reportedError = readQueuedError(queuedCallbacks)
+    expect(reportedError).toBeInstanceOf(AggregateError)
+    if (!(reportedError instanceof AggregateError)) {
+      throw new Error('预期上报 AggregateError')
+    }
+    expect(reportedError.errors).toEqual([stopError, disposeError])
   })
 
   it('快速连续点击基于最新内存状态依次保存', () => {

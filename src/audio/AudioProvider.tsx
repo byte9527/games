@@ -62,6 +62,50 @@ function reportUnexpectedError(error: unknown): void {
   })
 }
 
+interface EngineCleanupFailure {
+  readonly failed: boolean
+  readonly error: unknown
+}
+
+const noEngineCleanupFailure: EngineCleanupFailure = { failed: false, error: undefined }
+
+function reportEngineCleanupError(
+  stopFailure: EngineCleanupFailure,
+  disposeFailure: EngineCleanupFailure,
+): void {
+  if (stopFailure.failed && disposeFailure.failed) {
+    reportUnexpectedError(
+      new AggregateError([stopFailure.error, disposeFailure.error], '音乐引擎停止和释放均失败'),
+    )
+  } else if (stopFailure.failed) {
+    reportUnexpectedError(stopFailure.error)
+  } else if (disposeFailure.failed) {
+    reportUnexpectedError(disposeFailure.error)
+  }
+}
+
+function disposeEngine(engine: MusicEnginePort): void {
+  let stopFailure = noEngineCleanupFailure
+  try {
+    engine.stop()
+  } catch (error) {
+    stopFailure = { failed: true, error }
+  }
+
+  let disposePromise: Promise<void>
+  try {
+    disposePromise = Promise.resolve(engine.dispose())
+  } catch (error) {
+    reportEngineCleanupError(stopFailure, { failed: true, error })
+    return
+  }
+
+  void disposePromise.then(
+    () => reportEngineCleanupError(stopFailure, noEngineCleanupFailure),
+    (error: unknown) => reportEngineCleanupError(stopFailure, { failed: true, error }),
+  )
+}
+
 export function AudioProvider({ children, engineFactory, storage }: AudioProviderProps) {
   const storageRef = useRef<MusicPreferenceStoragePort | null>(null)
   if (storageRef.current === null) {
@@ -174,10 +218,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       unlockPromiseRef.current = null
       const engine = engineRef.current
       engineRef.current = null
-      if (engine !== null) {
-        engine.stop()
-        void engine.dispose().catch(reportUnexpectedError)
-      }
+      if (engine !== null) disposeEngine(engine)
     }
   }, [])
 

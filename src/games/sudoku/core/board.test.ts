@@ -43,19 +43,29 @@ const boardConsumers = [
 ]
 
 describe('sudoku board', () => {
-  it('定义 9×9 棋盘常量和只读游戏状态结构', () => {
+  it('定义 9×9 棋盘常量和准确的只读类型契约', () => {
     const state = {
       puzzleId: 'easy-1',
       difficulty: 'easy',
       givens: createBoardFromString('0'.repeat(CELL_COUNT)),
       values: createBoardFromString('0'.repeat(CELL_COUNT)),
       candidates: Array.from({ length: CELL_COUNT }, () => 0),
-      selectedIndex: null,
+      selectedIndex: 0,
       noteMode: false,
       history: [],
       elapsedMs: 0,
       status: 'playing',
     } satisfies SudokuGameState
+
+    expectTypeOf<SudokuGameState['selectedIndex']>().toEqualTypeOf<number>()
+    expectTypeOf<Pick<SudokuGameState, 'puzzleId' | 'selectedIndex'>>().toEqualTypeOf<{
+      readonly puzzleId: string
+      readonly selectedIndex: number
+    }>()
+    expectTypeOf<ReturnType<typeof peerIndices>>().toEqualTypeOf<readonly number[]>()
+    expectTypeOf<ReturnType<typeof createBoardFromString>>().toEqualTypeOf<
+      readonly CellValue[]
+    >()
 
     expect(SUDOKU_SIZE).toBe(9)
     expect(CELL_COUNT).toBe(81)
@@ -82,8 +92,9 @@ describe('sudoku board', () => {
     it('每次返回新的关联格数组，不泄露可变内部状态', () => {
       const first = peerIndices(40)
       const expected = [...first]
+      const mutableFirst = first as number[]
 
-      first.splice(0, first.length, 80)
+      mutableFirst.splice(0, mutableFirst.length, 80)
 
       expect(peerIndices(40)).toEqual(expected)
       expect(peerIndices(40)).not.toBe(peerIndices(40))

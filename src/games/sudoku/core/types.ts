@@ -30,7 +30,7 @@ export interface SudokuGameState {
   readonly givens: readonly CellValue[]
   readonly values: readonly CellValue[]
   readonly candidates: readonly CandidateMask[]
-  readonly selectedIndex: number | null
+  readonly selectedIndex: number
   readonly noteMode: boolean
   readonly history: readonly HistoryEntry[]
   readonly elapsedMs: number

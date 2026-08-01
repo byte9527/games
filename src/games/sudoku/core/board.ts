@@ -130,7 +130,7 @@ export const boxOf = (index: number): number => {
   return Math.floor(row / BOX_SIZE) * BOX_SIZE + Math.floor(col / BOX_SIZE)
 }
 
-export const peerIndices = (index: number): number[] => {
+export const peerIndices = (index: number): readonly number[] => {
   assertCellIndex(index)
 
   const peers = new Set<number>()
@@ -154,7 +154,7 @@ export const peerIndices = (index: number): number[] => {
   return [...peers].sort((left, right) => left - right)
 }
 
-export const createBoardFromString = (input: string): CellValue[] => {
+export const createBoardFromString = (input: string): readonly CellValue[] => {
   if (input.length !== CELL_COUNT) {
     throw new Error(
       `Sudoku board string must contain exactly 81 characters; received ${input.length}`,

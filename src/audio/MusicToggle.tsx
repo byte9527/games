@@ -6,21 +6,21 @@ export function MusicToggle() {
   const unavailableDescriptionId = useId()
   const unavailable = availability === 'unavailable'
 
-  const label = unavailable ? '音乐不可用' : enabled ? '关闭音乐' : '开启音乐'
-  const text = unavailable ? '音乐不可用' : enabled ? '音乐开' : '音乐关'
+  const stateText = unavailable ? '不可用' : enabled ? '开' : '关'
 
   return (
     <Fragment>
       <button
         type="button"
         className="music-toggle"
-        aria-label={label}
         aria-pressed={enabled}
         aria-describedby={unavailable ? unavailableDescriptionId : undefined}
+        data-audio-toggle="true"
         disabled={unavailable}
         onClick={toggle}
       >
-        {text}
+        <span>音乐</span>
+        <span aria-hidden="true">{stateText}</span>
       </button>
       {unavailable ? (
         <span id={unavailableDescriptionId} className="visually-hidden">

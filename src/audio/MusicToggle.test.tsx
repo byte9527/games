@@ -41,20 +41,24 @@ function renderMusicToggle({
 }
 
 describe('MusicToggle', () => {
-  it('默认开启时点击关闭音乐并保存偏好', () => {
+  it('默认开启时点击关闭音乐并保存偏好且不创建引擎', async () => {
+    const user = userEvent.setup()
     const storage = createStorage()
     const engine = createEngine()
-    renderMusicToggle({ engine, storage })
+    const { engineFactory } = renderMusicToggle({ engine, storage })
 
-    const button = screen.getByRole('button', { name: '关闭音乐' })
+    const button = screen.getByRole('button', { name: '音乐' })
     expect(button).toHaveAttribute('aria-pressed', 'true')
     expect(button).toHaveTextContent('音乐开')
 
-    fireEvent.click(button)
+    await user.click(button)
 
-    expect(screen.getByRole('button', { name: '开启音乐' })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByRole('button', { name: '开启音乐' })).toHaveTextContent('音乐关')
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveTextContent('音乐关')
     expect(storage.save).toHaveBeenCalledWith(false)
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+    expect(engine.play).not.toHaveBeenCalled()
   })
 
   it('初始关闭时可用键盘开启音乐并解锁引擎', async () => {
@@ -64,15 +68,30 @@ describe('MusicToggle', () => {
     renderMusicToggle({ engine, storage })
 
     await user.tab()
-    const button = screen.getByRole('button', { name: '开启音乐' })
+    const button = screen.getByRole('button', { name: '音乐' })
     expect(button).toHaveFocus()
 
     await user.keyboard('{Enter}')
 
     expect(storage.save).toHaveBeenCalledWith(true)
     await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: '关闭音乐' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: '关闭音乐' })).toHaveTextContent('音乐开')
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveTextContent('音乐开')
+  })
+
+  it('初始关闭时可用 Space 开启音乐', async () => {
+    const user = userEvent.setup()
+    const storage = createStorage(false)
+    const engine = createEngine()
+    renderMusicToggle({ engine, storage })
+
+    await user.tab()
+    await user.keyboard(' ')
+
+    expect(storage.save).toHaveBeenCalledWith(true)
+    await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveTextContent('音乐开')
   })
 
   it('引擎不可用后显示禁用的无障碍说明', async () => {
@@ -82,9 +101,10 @@ describe('MusicToggle', () => {
     fireEvent.pointerDown(document)
 
     await waitFor(() => {
-      const button = screen.getByRole('button', { name: '音乐不可用' })
+      const button = screen.getByRole('button', { name: '音乐' })
       expect(button).toBeDisabled()
       expect(button).toHaveAttribute('aria-pressed', 'true')
+      expect(button).toHaveTextContent('音乐不可用')
       expect(button).toHaveAccessibleDescription('当前浏览器无法播放音乐。')
     })
   })
@@ -102,8 +122,12 @@ describe('MusicToggle', () => {
 
     fireEvent.pointerDown(document)
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: '音乐不可用' })).toHaveLength(2))
-    const [firstButton, secondButton] = screen.getAllByRole('button', { name: '音乐不可用' })
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', { name: '音乐' })
+      expect(buttons).toHaveLength(2)
+      expect(buttons.every((button) => button.textContent === '音乐不可用')).toBe(true)
+    })
+    const [firstButton, secondButton] = screen.getAllByRole('button', { name: '音乐' })
     if (firstButton === undefined || secondButton === undefined) {
       throw new Error('预期存在两个音乐开关')
     }
@@ -127,7 +151,7 @@ describe('MusicToggle', () => {
     fireEvent.pointerDown(document)
 
     await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
-    const button = screen.getByRole('button', { name: '关闭音乐' })
+    const button = screen.getByRole('button', { name: '音乐' })
     expect(button).toBeEnabled()
     expect(button).toHaveAttribute('aria-pressed', 'true')
     expect(button).toHaveTextContent('音乐开')

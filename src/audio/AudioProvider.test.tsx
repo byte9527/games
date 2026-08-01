@@ -227,6 +227,36 @@ describe('AudioProvider', () => {
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
   })
 
+  it('音乐开关的可信事件不触发全局解锁，普通目标仍可解锁', async () => {
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+
+    render(
+      <AudioProvider engineFactory={engineFactory} storage={createStorage()}>
+        <button type="button" data-audio-toggle="true">
+          音乐开关
+        </button>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    const musicToggle = screen.getByRole('button', { name: '音乐开关' })
+    await act(async () => {
+      fireEvent.pointerDown(musicToggle)
+      fireEvent.keyDown(musicToggle)
+    })
+
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.pointerDown(document.body)
+    })
+
+    expect(engineFactory).toHaveBeenCalledTimes(1)
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+  })
+
   it('StrictMode 下同时到达的可信事件共享一次创建和解锁', async () => {
     const deferred = createDeferred<MusicUnlockResult>()
     const engine = createEngine()

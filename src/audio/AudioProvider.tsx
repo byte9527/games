@@ -264,7 +264,13 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   useEffect(() => {
     if (!enabled || availability !== 'locked') return
 
-    const requestUnlock = () => {
+    const requestUnlock = (event: Event) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-audio-toggle="true"]') !== null
+      ) {
+        return
+      }
       void ensureUnlocked()
     }
     document.addEventListener('pointerdown', requestUnlock, true)

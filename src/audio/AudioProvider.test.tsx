@@ -1,8 +1,12 @@
-import { Component, StrictMode, type ReactNode } from 'react'
+import { Component, StrictMode, type ReactNode, useEffect } from 'react'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MusicEngineFactory, MusicEnginePort, MusicUnlockResult } from './core/MusicEnginePort'
 import type { MusicScore } from './core/musicScore'
 import type { MusicPreferenceStoragePort } from './storage/musicPreferenceStorage'
+import {
+  observeDocumentEventBoundary,
+  type DocumentEventBoundary,
+} from '../test/documentEventBoundary'
 import { AudioProvider, useAudioController } from './AudioProvider'
 import { useGameMusic } from './useGameMusic'
 
@@ -78,17 +82,24 @@ function AudioActivationHarness() {
       <output data-testid="enabled">{String(controller.enabled)}</output>
       <output data-testid="availability">{controller.availability}</output>
       <output data-testid="notice">{controller.notice ?? ''}</output>
-      <button type="button" onClick={() => controller.toggle(false)}>
+      <button type="button" data-audio-toggle="true" onClick={() => controller.toggle()}>
         toggle
-      </button>
-      <button type="button" onClick={() => controller.toggle(true)}>
-        trusted toggle
       </button>
       <button type="button" onClick={controller.dismissNotice}>
         dismiss
       </button>
     </div>
   )
+}
+
+function UntrustedControllerConsumer() {
+  const { enabled, toggle } = useAudioController()
+
+  useEffect(() => {
+    queueMicrotask(() => toggle())
+  }, [toggle])
+
+  return <output data-testid="untrusted-enabled">{String(enabled)}</output>
 }
 
 function SceneRegistration({ gameScore, active }: { gameScore: MusicScore; active: boolean }) {
@@ -137,33 +148,6 @@ function setVisibilityState(value: DocumentVisibilityState) {
   fireEvent(document, new Event('visibilitychange'))
 }
 
-type DocumentListenerCall = readonly [
-  type: string,
-  listener: EventListenerOrEventListenerObject,
-  options?: boolean | AddEventListenerOptions,
-]
-
-function countActiveCaptureListeners(
-  eventType: 'pointerdown' | 'keydown',
-  addCalls: readonly DocumentListenerCall[],
-  removeCalls: readonly DocumentListenerCall[],
-): number {
-  const listenerBalances = new Map<EventListenerOrEventListenerObject, number>()
-
-  for (const [type, listener, options] of addCalls) {
-    if (type === eventType && options === true) {
-      listenerBalances.set(listener, (listenerBalances.get(listener) ?? 0) + 1)
-    }
-  }
-  for (const [type, listener, options] of removeCalls) {
-    if (type === eventType && options === true) {
-      listenerBalances.set(listener, (listenerBalances.get(listener) ?? 0) - 1)
-    }
-  }
-
-  return [...listenerBalances.values()].reduce((total, balance) => total + Math.max(balance, 0), 0)
-}
-
 function readQueuedError(callbacks: readonly VoidFunction[]): unknown {
   expect(callbacks).toHaveLength(1)
   const callback = callbacks[0]
@@ -198,16 +182,22 @@ async function flushPromiseChain(): Promise<void> {
 
 async function activateAudioWithVerifiedSignal(): Promise<void> {
   await act(async () => {
-    if (screen.getByTestId('enabled').textContent === 'true') {
-      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-    }
-    fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    documentEventBoundary.dispatchTrustedCapture('pointerdown', document.body)
     await flushPromiseChain()
   })
 }
 
+function clickToggleWithTrustedBrowserBoundary(): void {
+  const toggle = screen.getByRole('button', { name: 'toggle' })
+  documentEventBoundary.dispatchTrustedCapture('click', toggle)
+  fireEvent.click(toggle)
+}
+
+let documentEventBoundary: DocumentEventBoundary
+
 beforeEach(() => {
   window.localStorage.clear()
+  documentEventBoundary = observeDocumentEventBoundary()
 })
 
 afterEach(() => {
@@ -220,6 +210,53 @@ afterEach(() => {
 })
 
 describe('AudioProvider', () => {
+  it('普通 controller 消费者不能在无可信事件时声明可信并创建引擎', async () => {
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+
+    render(
+      <AudioProvider
+        engineFactory={engineFactory}
+        storage={createStorage({ kind: 'loaded', enabled: false })}
+      >
+        <UntrustedControllerConsumer />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      await flushPromiseChain()
+    })
+
+    expect(screen.getByTestId('untrusted-enabled')).toHaveTextContent('true')
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+  })
+
+  it('未被同步消费的可信开关 click 在当前事件任务结束后失效', async () => {
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+
+    render(
+      <AudioProvider
+        engineFactory={engineFactory}
+        storage={createStorage({ kind: 'loaded', enabled: false })}
+      >
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    const toggle = screen.getByRole('button', { name: 'toggle' })
+    await act(async () => {
+      documentEventBoundary.dispatchTrustedCapture('click', toggle)
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+    })
+    fireEvent.click(toggle)
+
+    expect(screen.getByTestId('enabled')).toHaveTextContent('true')
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+  })
+
   it('合成的全局 pointerdown 和 keydown 不创建或解锁引擎', async () => {
     const engine = createEngine()
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
@@ -302,8 +339,6 @@ describe('AudioProvider', () => {
     const engine = createEngine()
     vi.mocked(engine.unlock).mockReturnValue(deferred.promise)
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
-    const addEventListener = vi.spyOn(document, 'addEventListener')
-    const removeEventListener = vi.spyOn(document, 'removeEventListener')
 
     const view = render(
       <StrictMode>
@@ -314,26 +349,28 @@ describe('AudioProvider', () => {
     )
 
     expect(
-      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('pointerdown'),
     ).toBe(1)
     expect(
-      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(1)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(1)
 
     await activateAudioWithVerifiedSignal()
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
     })
 
     expect(engineFactory).toHaveBeenCalledTimes(1)
     expect(engine.unlock).toHaveBeenCalledTimes(1)
     expect(
-      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('pointerdown'),
     ).toBe(1)
     expect(
-      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(1)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(1)
 
     await act(async () => {
       deferred.resolve({ ok: true })
@@ -343,19 +380,21 @@ describe('AudioProvider', () => {
     expect(engine.play).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
     expect(
-      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('pointerdown'),
     ).toBe(0)
     expect(
-      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(0)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(1)
 
     view.unmount()
     expect(
-      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('pointerdown'),
     ).toBe(0)
     expect(
-      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+      documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(0)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(0)
   })
 
   it('解锁被阻止时保持 locked 且允许下一次事件重试', async () => {
@@ -378,7 +417,7 @@ describe('AudioProvider', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
       await flushPromiseChain()
     })
 
@@ -408,7 +447,7 @@ describe('AudioProvider', () => {
     await activateAudioWithVerifiedSignal()
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
     })
     expect(engine.unlock).toHaveBeenCalledTimes(1)
 
@@ -466,7 +505,7 @@ describe('AudioProvider', () => {
     expect(engineFactory).not.toHaveBeenCalled()
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
       await flushPromiseChain()
     })
 
@@ -590,7 +629,7 @@ describe('AudioProvider', () => {
 
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
     })
 
     expect(engine.unlock).toHaveBeenCalledTimes(2)
@@ -629,7 +668,7 @@ describe('AudioProvider', () => {
     expect(screen.getByTestId('availability')).toHaveTextContent('locked')
 
     fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-    fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    clickToggleWithTrustedBrowserBoundary()
 
     expect(engineFactory).toHaveBeenCalledTimes(1)
     expect(engine.unlock).toHaveBeenCalledTimes(2)
@@ -673,7 +712,7 @@ describe('AudioProvider', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
       await flushPromiseChain()
     })
 
@@ -880,7 +919,7 @@ describe('AudioProvider', () => {
     await activateAudioWithVerifiedSignal()
     act(() => {
       fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
-      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      clickToggleWithTrustedBrowserBoundary()
     })
     expect(engine.unlock).toHaveBeenCalledTimes(1)
     view.unmount()

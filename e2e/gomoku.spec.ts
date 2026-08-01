@@ -144,6 +144,7 @@ test('音乐开关跨刷新保存，且仅真实鼠标、触控或键盘激活�
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   await expect(toggle).toHaveText('音乐关')
+  expect(await readAudioLifecycle(page)).toEqual({ constructions: 0, resumes: 0 })
 
   await page.reload()
 

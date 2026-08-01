@@ -21,7 +21,7 @@ export interface AudioController {
   readonly enabled: boolean
   readonly availability: 'locked' | 'ready' | 'unavailable'
   readonly notice: string | null
-  toggle(hasTrustedUserActivation: boolean): void
+  toggle(): void
   dismissNotice(): void
   setGameMusic(score: MusicScore, active: boolean): () => void
 }
@@ -143,6 +143,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   const registrationsRef = useRef(new Map<symbol, MusicRegistration>())
   const engineRef = useRef<MusicEnginePort | null>(null)
   const unlockPromiseRef = useRef<Promise<void> | null>(null)
+  const trustedToggleActivationRef = useRef<Event | null>(null)
   const engineFactoryRef = useRef<MusicEngineFactory>(engineFactory ?? createDefaultMusicEngine)
   const disposedRef = useRef(false)
   engineFactoryRef.current = engineFactory ?? createDefaultMusicEngine
@@ -199,7 +200,9 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return trackedUnlock
   }, [updateAvailability])
 
-  const toggle = useCallback((hasTrustedUserActivation: boolean) => {
+  const toggle = useCallback(() => {
+    const hasTrustedUserActivation = trustedToggleActivationRef.current?.isTrusted === true
+    trustedToggleActivationRef.current = null
     const nextEnabled = !enabledRef.current
     enabledRef.current = nextEnabled
 
@@ -262,9 +265,37 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return () => {
       disposedRef.current = true
       unlockPromiseRef.current = null
+      trustedToggleActivationRef.current = null
       const engine = engineRef.current
       engineRef.current = null
       if (engine !== null) disposeEngine(engine)
+    }
+  }, [])
+
+  useEffect(() => {
+    const clearTrustedToggleActivation = (event: Event) => {
+      if (trustedToggleActivationRef.current === event) {
+        trustedToggleActivationRef.current = null
+      }
+    }
+
+    const recordTrustedToggleActivation = (event: Event) => {
+      if (!event.isTrusted) return
+      if (
+        !(event.target instanceof Element) ||
+        event.target.closest('[data-audio-toggle="true"]') === null
+      ) {
+        return
+      }
+
+      trustedToggleActivationRef.current = event
+      window.setTimeout(() => clearTrustedToggleActivation(event), 0)
+    }
+    document.addEventListener('click', recordTrustedToggleActivation, true)
+    document.addEventListener('click', clearTrustedToggleActivation)
+    return () => {
+      document.removeEventListener('click', recordTrustedToggleActivation, true)
+      document.removeEventListener('click', clearTrustedToggleActivation)
     }
   }, [])
 

@@ -2,9 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { StrictMode, type ReactElement } from 'react'
 
-import { AudioProvider, useAudioController } from '../../audio/AudioProvider'
+import { AudioProvider } from '../../audio/AudioProvider'
 import type { MusicEnginePort } from '../../audio/core/MusicEnginePort'
 import type { MusicPreferenceStoragePort } from '../../audio/storage/musicPreferenceStorage'
+import {
+  observeDocumentEventBoundary,
+  type DocumentEventBoundary,
+} from '../../test/documentEventBoundary'
 import { gomokuMusicScore } from './audio/gomokuMusicScore'
 import { ResultDialog } from './components/ResultDialog'
 import { createGame, placeStone, replayMoves } from './core/game'
@@ -130,29 +134,20 @@ function withAudio(ui: ReactElement): ReactElement {
   return (
     <AudioProvider engineFactory={() => audioEngine} storage={audioPreferenceStorage}>
       {ui}
-      <VerifiedAudioActivationHarness />
     </AudioProvider>
   )
 }
 
-function VerifiedAudioActivationHarness() {
-  const controller = useAudioController()
-
-  function activate(): void {
-    if (controller.enabled) controller.toggle(false)
-    controller.toggle(true)
-  }
-
-  return (
-    <button type="button" data-testid="verified-audio-activation" onClick={activate}>
-      已验证音频激活
-    </button>
-  )
-}
-
 function activateAudioWithVerifiedSignal(): void {
-  fireEvent.click(screen.getByTestId('verified-audio-activation'))
+  documentEventBoundary.dispatchTrustedCapture('pointerdown', document.body)
 }
+
+function clickMusicToggleWithTrustedBrowserBoundary(button: HTMLElement): void {
+  documentEventBoundary.dispatchTrustedCapture('click', button)
+  fireEvent.click(button)
+}
+
+let documentEventBoundary: DocumentEventBoundary
 
 function renderPage(storage: GomokuStoragePort = new FakeStorage({ kind: 'empty' })) {
   return render(withAudio(<GomokuPage storage={storage} />))
@@ -167,10 +162,15 @@ describe('GomokuPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.localStorage.clear()
+    documentEventBoundary = observeDocumentEventBoundary()
     audioEngine.unlock.mockResolvedValue({ ok: true })
     audioEngine.dispose.mockResolvedValue()
     audioPreferenceStorage.load.mockReturnValue({ kind: 'loaded', enabled: true })
     audioPreferenceStorage.save.mockReturnValue({ ok: true })
+  })
+
+  afterEach(() => {
+    documentEventBoundary.restore()
   })
 
   it('组装页面标题、hash 返回链接、225 点棋盘和黑方回合', () => {
@@ -265,7 +265,7 @@ describe('GomokuPage', () => {
     await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
     expect(audioEngine.unlock).not.toHaveBeenCalled()
 
-    activateAudioWithVerifiedSignal()
+    clickMusicToggleWithTrustedBrowserBoundary(musicToggle)
 
     await waitFor(() => expect(audioEngine.unlock).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore))

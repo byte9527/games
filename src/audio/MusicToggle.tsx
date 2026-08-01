@@ -17,7 +17,7 @@ export function MusicToggle() {
         aria-describedby={unavailable ? unavailableDescriptionId : undefined}
         data-audio-toggle="true"
         disabled={unavailable}
-        onClick={(event) => toggle(event.nativeEvent.isTrusted)}
+        onClick={toggle}
       >
         <span>音乐</span>
         <span aria-hidden="true">{stateText}</span>

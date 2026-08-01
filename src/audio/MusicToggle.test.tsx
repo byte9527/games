@@ -1,9 +1,13 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AudioProvider, useAudioController } from './AudioProvider'
+import { AudioProvider } from './AudioProvider'
 import { MusicToggle } from './MusicToggle'
 import type { MusicEngineFactory, MusicEnginePort, MusicUnlockResult } from './core/MusicEnginePort'
 import type { MusicPreferenceStoragePort } from './storage/musicPreferenceStorage'
+import {
+  observeDocumentEventBoundary,
+  type DocumentEventBoundary,
+} from '../test/documentEventBoundary'
 
 function createEngine(unlockResult: MusicUnlockResult = { ok: true }): MusicEnginePort {
   return {
@@ -22,15 +26,6 @@ function createStorage(enabled = true): MusicPreferenceStoragePort {
   }
 }
 
-function VerifiedActivationHarness() {
-  const controller = useAudioController()
-  return (
-    <button type="button" onClick={() => controller.toggle(true)}>
-      已验证可信激活
-    </button>
-  )
-}
-
 function renderMusicToggle({
   engine,
   storage,
@@ -43,11 +38,25 @@ function renderMusicToggle({
     ...render(
       <AudioProvider engineFactory={engineFactory} storage={storage}>
         <MusicToggle />
-        <VerifiedActivationHarness />
       </AudioProvider>,
     ),
     engineFactory,
   }
+}
+
+let documentEventBoundary: DocumentEventBoundary
+
+beforeEach(() => {
+  documentEventBoundary = observeDocumentEventBoundary()
+})
+
+afterEach(() => {
+  documentEventBoundary.restore()
+})
+
+function clickMusicToggleWithTrustedBrowserBoundary(button: HTMLElement): void {
+  documentEventBoundary.dispatchTrustedCapture('click', button)
+  fireEvent.click(button)
 }
 
 describe('MusicToggle', () => {
@@ -124,7 +133,7 @@ describe('MusicToggle', () => {
     const engine = createEngine({ ok: false, kind: 'unavailable' })
     renderMusicToggle({ engine, storage: createStorage(false) })
 
-    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
+    clickMusicToggleWithTrustedBrowserBoundary(screen.getByRole('button', { name: '音乐' }))
 
     await waitFor(() => {
       const button = screen.getByRole('button', { name: '音乐' })
@@ -143,11 +152,12 @@ describe('MusicToggle', () => {
       <AudioProvider engineFactory={engineFactory} storage={createStorage(false)}>
         <MusicToggle />
         <MusicToggle />
-        <VerifiedActivationHarness />
       </AudioProvider>,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
+    const firstToggle = screen.getAllByRole('button', { name: '音乐' })[0]
+    if (firstToggle === undefined) throw new Error('预期存在音乐开关')
+    clickMusicToggleWithTrustedBrowserBoundary(firstToggle)
 
     await waitFor(() => {
       const buttons = screen.getAllByRole('button', { name: '音乐' })
@@ -175,7 +185,7 @@ describe('MusicToggle', () => {
     const engine = createEngine({ ok: false, kind: 'blocked' })
     renderMusicToggle({ engine, storage: createStorage(false) })
 
-    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
+    clickMusicToggleWithTrustedBrowserBoundary(screen.getByRole('button', { name: '音乐' }))
 
     await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
     const button = screen.getByRole('button', { name: '音乐' })

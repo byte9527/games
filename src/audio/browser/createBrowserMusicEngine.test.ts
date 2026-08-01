@@ -60,6 +60,12 @@ function timerIdFromCall(
   return timerId
 }
 
+function invocationOrder(callOrders: readonly number[], label: string): number {
+  const order = callOrders[0]
+  if (order === undefined) throw new Error(`${label} 未发生调用`)
+  return order
+}
+
 function createHarness(backend = createFakeBackend()) {
   const timers = createTimerHarness()
   const createBackend = vi.fn(() => backend)
@@ -126,18 +132,33 @@ describe('browser music engine lifecycle', () => {
     expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
   })
 
-  it('cancels pause cleanup before replay so it cannot stop new notes', async () => {
+  it('clears pause cleanup and old nodes before fading in and scheduling replay', async () => {
     const { backend, callbacks, clearTimer, engine, setTimer } = createHarness()
     await engine.unlock()
     engine.play(score)
     engine.pause(score.fadeSeconds)
     const cleanupTimerId = timerIdFromCall(setTimer, 1)
+    clearTimer.mockClear()
+    backend.stopScheduled.mockClear()
+    backend.fadeMasterTo.mockClear()
+    backend.schedule.mockClear()
 
     engine.play(score)
 
     expect(clearTimer).toHaveBeenCalledWith(cleanupTimerId)
     expect(callbacks.has(cleanupTimerId)).toBe(false)
     expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
+    expect(backend.fadeMasterTo).toHaveBeenCalledWith(score.masterGain, score.fadeSeconds)
+    expect(backend.schedule).toHaveBeenCalledTimes(score.notes.length)
+    expect(invocationOrder(clearTimer.mock.invocationCallOrder, 'clearTimer')).toBeLessThan(
+      invocationOrder(backend.stopScheduled.mock.invocationCallOrder, 'stopScheduled'),
+    )
+    expect(invocationOrder(backend.stopScheduled.mock.invocationCallOrder, 'stopScheduled')).toBeLessThan(
+      invocationOrder(backend.fadeMasterTo.mock.invocationCallOrder, 'fadeMasterTo'),
+    )
+    expect(invocationOrder(backend.fadeMasterTo.mock.invocationCallOrder, 'fadeMasterTo')).toBeLessThan(
+      invocationOrder(backend.schedule.mock.invocationCallOrder, 'schedule'),
+    )
   })
 
   it('does not restart an already playing score with an active loop timer', async () => {
@@ -152,17 +173,30 @@ describe('browser music engine lifecycle', () => {
     expect(backend.stopScheduled).not.toHaveBeenCalled()
   })
 
-  it('stops old scheduled nodes before switching score ids', async () => {
-    const { backend, engine } = createHarness()
+  it('clears the old loop before stopping, fading in, and scheduling a new score id', async () => {
+    const { backend, clearTimer, engine, setTimer } = createHarness()
     await engine.unlock()
     engine.play(score)
+    const loopTimerId = timerIdFromCall(setTimer, 0)
+    clearTimer.mockClear()
+    backend.stopScheduled.mockClear()
+    backend.fadeMasterTo.mockClear()
+    backend.schedule.mockClear()
 
     engine.play({ ...score, id: 'river-theme' })
 
+    expect(clearTimer).toHaveBeenCalledWith(loopTimerId)
     expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
-    expect(backend.schedule).toHaveBeenCalledTimes(score.notes.length * 2)
-    expect(backend.stopScheduled.mock.invocationCallOrder[0]).toBeLessThan(
-      backend.schedule.mock.invocationCallOrder[score.notes.length] ?? Number.POSITIVE_INFINITY,
+    expect(backend.fadeMasterTo).toHaveBeenCalledWith(score.masterGain, score.fadeSeconds)
+    expect(backend.schedule).toHaveBeenCalledTimes(score.notes.length)
+    expect(invocationOrder(clearTimer.mock.invocationCallOrder, 'clearTimer')).toBeLessThan(
+      invocationOrder(backend.stopScheduled.mock.invocationCallOrder, 'stopScheduled'),
+    )
+    expect(invocationOrder(backend.stopScheduled.mock.invocationCallOrder, 'stopScheduled')).toBeLessThan(
+      invocationOrder(backend.fadeMasterTo.mock.invocationCallOrder, 'fadeMasterTo'),
+    )
+    expect(invocationOrder(backend.fadeMasterTo.mock.invocationCallOrder, 'fadeMasterTo')).toBeLessThan(
+      invocationOrder(backend.schedule.mock.invocationCallOrder, 'schedule'),
     )
   })
 
@@ -197,19 +231,44 @@ describe('browser music engine lifecycle', () => {
     await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'unavailable' })
   })
 
-  it('makes repeated stop and dispose calls idempotent', async () => {
-    const { backend, callbacks, engine } = createHarness()
+  it('makes repeated stop calls idempotent', async () => {
+    const { backend, callbacks, clearTimer, engine, setTimer } = createHarness()
     await engine.unlock()
     engine.play(score)
+    const loopTimerId = timerIdFromCall(setTimer, 0)
+    clearTimer.mockClear()
+    backend.stopScheduled.mockClear()
+    backend.fadeMasterTo.mockClear()
 
     engine.stop()
     engine.stop()
+
+    expect(callbacks).toHaveLength(0)
+    expect(clearTimer).toHaveBeenCalledTimes(1)
+    expect(clearTimer).toHaveBeenCalledWith(loopTimerId)
+    expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
+    expect(backend.fadeMasterTo).toHaveBeenCalledTimes(1)
+    expect(backend.fadeMasterTo).toHaveBeenCalledWith(0, 0)
+  })
+
+  it('makes repeated dispose calls idempotent', async () => {
+    const { backend, callbacks, clearTimer, engine, setTimer } = createHarness()
+    await engine.unlock()
+    engine.play(score)
+    const loopTimerId = timerIdFromCall(setTimer, 0)
+    clearTimer.mockClear()
+    backend.stopScheduled.mockClear()
+    backend.close.mockClear()
+
     engine.dispose()
     engine.dispose()
 
     expect(callbacks).toHaveLength(0)
+    expect(clearTimer).toHaveBeenCalledTimes(1)
+    expect(clearTimer).toHaveBeenCalledWith(loopTimerId)
+    expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
     expect(backend.close).toHaveBeenCalledTimes(1)
-    expect(backend.fadeMasterTo).toHaveBeenCalledWith(0, 0)
+    await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'unavailable' })
   })
 
   it('still closes and releases the backend when stopping during dispose throws', async () => {

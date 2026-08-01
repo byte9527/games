@@ -38,6 +38,18 @@ interface MusicScene {
   readonly token: symbol
 }
 
+interface ValidMusicRegistration extends MusicScene {
+  readonly kind: 'valid'
+}
+
+interface InvalidMusicRegistration {
+  readonly kind: 'invalid'
+  readonly token: symbol
+  readonly message: string
+}
+
+type MusicRegistration = ValidMusicRegistration | InvalidMusicRegistration
+
 interface InitialPreference {
   readonly enabled: boolean
   readonly notice: string | null
@@ -60,6 +72,10 @@ function reportUnexpectedError(error: unknown): void {
   queueMicrotask(() => {
     throw error
   })
+}
+
+function createUnlockError(cause: unknown): Error {
+  return new Error('音乐引擎解锁失败', { cause })
 }
 
 interface EngineCleanupFailure {
@@ -119,10 +135,12 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   const [notice, setNotice] = useState<string | null>(initialPreference.notice)
   const [scene, setScene] = useState<MusicScene | null>(null)
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden')
+  const [fatalError, setFatalError] = useState<Error | null>(null)
 
   const enabledRef = useRef(enabled)
   const availabilityRef = useRef<AudioController['availability']>(availability)
   const sceneRef = useRef<MusicScene | null>(null)
+  const registrationsRef = useRef(new Map<symbol, MusicRegistration>())
   const engineRef = useRef<MusicEnginePort | null>(null)
   const unlockPromiseRef = useRef<Promise<void> | null>(null)
   const engineFactoryRef = useRef<MusicEngineFactory>(engineFactory ?? createDefaultMusicEngine)
@@ -140,20 +158,21 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     const pendingUnlock = unlockPromiseRef.current
     if (pendingUnlock !== null) return pendingUnlock
 
-    let engine = engineRef.current
-    if (engine === null) {
-      engine = engineFactoryRef.current()
+    const unlockAttempt = (async () => {
+      let engine = engineRef.current
       if (engine === null) {
-        if (!disposedRef.current) {
-          updateAvailability('unavailable')
-          setNotice('当前浏览器无法播放音乐。')
+        engine = engineFactoryRef.current()
+        if (engine === null) {
+          if (!disposedRef.current) {
+            updateAvailability('unavailable')
+            setNotice('当前浏览器无法播放音乐。')
+          }
+          return
         }
-        return Promise.resolve()
+        engineRef.current = engine
       }
-      engineRef.current = engine
-    }
 
-    const unlock = engine.unlock().then((result) => {
+      const result = await engine.unlock()
       if (disposedRef.current) return
 
       if (result.ok) {
@@ -162,8 +181,15 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
         updateAvailability('unavailable')
         setNotice('当前浏览器无法播放音乐。')
       }
-    })
-    const trackedUnlock = unlock.finally(() => {
+    })()
+    const trackedUnlock = unlockAttempt.catch((error: unknown) => {
+      const unlockError = createUnlockError(error)
+      if (disposedRef.current) {
+        reportUnexpectedError(unlockError)
+      } else {
+        setFatalError(unlockError)
+      }
+    }).finally(() => {
       if (unlockPromiseRef.current === trackedUnlock) unlockPromiseRef.current = null
     })
     unlockPromiseRef.current = trackedUnlock
@@ -180,7 +206,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     }
 
     if (nextEnabled) {
-      void ensureUnlocked().catch(reportUnexpectedError)
+      void ensureUnlocked()
     }
   }, [ensureUnlocked, storageAdapter])
 
@@ -188,27 +214,40 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     setNotice(null)
   }, [])
 
-  const setGameMusic = useCallback((scoreToRegister: MusicScore, active: boolean) => {
-    const validation = validateMusicScore(scoreToRegister)
-    if (!validation.ok) {
+  const publishLatestRegistration = useCallback(() => {
+    let latestRegistration: MusicRegistration | undefined
+    for (const registration of registrationsRef.current.values()) {
+      latestRegistration = registration
+    }
+
+    if (latestRegistration === undefined) {
+      sceneRef.current = null
+      setScene(null)
+    } else if (latestRegistration.kind === 'invalid') {
       engineRef.current?.stop()
       sceneRef.current = null
       setScene(null)
-      setNotice(`曲目配置无效：${validation.message}`)
-      return () => undefined
-    }
-
-    const token = Symbol(scoreToRegister.id)
-    const nextScene = { score: scoreToRegister, active, token }
-    sceneRef.current = nextScene
-    setScene(nextScene)
-
-    return () => {
-      if (sceneRef.current?.token !== token) return
-      sceneRef.current = null
-      setScene((currentScene) => (currentScene?.token === token ? null : currentScene))
+      setNotice(`曲目配置无效：${latestRegistration.message}`)
+    } else {
+      sceneRef.current = latestRegistration
+      setScene(latestRegistration)
     }
   }, [])
+
+  const setGameMusic = useCallback((scoreToRegister: MusicScore, active: boolean) => {
+    const token = Symbol(scoreToRegister.id)
+    const validation = validateMusicScore(scoreToRegister)
+    const registration: MusicRegistration = validation.ok
+      ? { kind: 'valid', score: scoreToRegister, active, token }
+      : { kind: 'invalid', token, message: validation.message }
+    registrationsRef.current.set(token, registration)
+    publishLatestRegistration()
+
+    return () => {
+      registrationsRef.current.delete(token)
+      publishLatestRegistration()
+    }
+  }, [publishLatestRegistration])
 
   useEffect(() => {
     disposedRef.current = false
@@ -226,7 +265,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     if (!enabled || availability !== 'locked') return
 
     const requestUnlock = () => {
-      void ensureUnlocked().catch(reportUnexpectedError)
+      void ensureUnlocked()
     }
     document.addEventListener('pointerdown', requestUnlock, true)
     document.addEventListener('keydown', requestUnlock, true)
@@ -264,6 +303,8 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     () => ({ enabled, availability, notice, toggle, dismissNotice, setGameMusic }),
     [availability, dismissNotice, enabled, notice, setGameMusic, toggle],
   )
+
+  if (fatalError !== null) throw fatalError
 
   return <AudioContext.Provider value={controller}>{children}</AudioContext.Provider>
 }

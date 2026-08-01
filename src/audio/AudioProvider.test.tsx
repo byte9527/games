@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { Component, StrictMode, type ReactNode } from 'react'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { MusicEngineFactory, MusicEnginePort, MusicUnlockResult } from './core/MusicEnginePort'
 import type { MusicScore } from './core/musicScore'
@@ -25,8 +25,10 @@ const score: MusicScore = {
 
 function createDeferred<T>() {
   let resolvePromise: ((value: T) => void) | undefined
-  const promise = new Promise<T>((resolve) => {
+  let rejectPromise: ((reason?: unknown) => void) | undefined
+  const promise = new Promise<T>((resolve, reject) => {
     resolvePromise = resolve
+    rejectPromise = reject
   })
 
   return {
@@ -34,6 +36,10 @@ function createDeferred<T>() {
     resolve(value: T) {
       if (resolvePromise === undefined) throw new Error('延迟 Promise 尚未初始化')
       resolvePromise(value)
+    },
+    reject(reason: unknown) {
+      if (rejectPromise === undefined) throw new Error('延迟 Promise 尚未初始化')
+      rejectPromise(reason)
     },
   }
 }
@@ -80,6 +86,37 @@ function ControllerHarness({ gameScore = score, active = true }: { gameScore?: M
 function SceneRegistration({ gameScore, active }: { gameScore: MusicScore; active: boolean }) {
   useGameMusic(gameScore, active)
   return null
+}
+
+interface CapturingErrorBoundaryProps {
+  readonly children: ReactNode
+  readonly onError: (error: Error) => void
+}
+
+interface CapturingErrorBoundaryState {
+  readonly error: Error | null
+}
+
+class CapturingErrorBoundary extends Component<
+  CapturingErrorBoundaryProps,
+  CapturingErrorBoundaryState
+> {
+  state: CapturingErrorBoundaryState = { error: null }
+
+  static getDerivedStateFromError(error: Error): CapturingErrorBoundaryState {
+    return { error }
+  }
+
+  componentDidCatch(error: Error) {
+    this.props.onError(error)
+  }
+
+  render() {
+    if (this.state.error !== null) {
+      return <output data-testid="fatal-error">{this.state.error.message}</output>
+    }
+    return this.props.children
+  }
 }
 
 const originalVisibilityState = Object.getOwnPropertyDescriptor(document, 'visibilityState')
@@ -130,6 +167,25 @@ function readQueuedError(callbacks: readonly VoidFunction[]): unknown {
     return error
   }
   throw new Error('全局错误回调没有抛出异常')
+}
+
+function collectQueuedErrors(callbacks: readonly VoidFunction[]): readonly unknown[] {
+  const errors: unknown[] = []
+  for (const callback of [...callbacks]) {
+    try {
+      callback()
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  return errors
+}
+
+async function flushPromiseChain(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 beforeEach(() => {
@@ -213,6 +269,12 @@ describe('AudioProvider', () => {
 
     expect(engine.play).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
+    expect(
+      countActiveCaptureListeners('pointerdown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(0)
+    expect(
+      countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
+    ).toBe(0)
 
     view.unmount()
     expect(
@@ -250,6 +312,46 @@ describe('AudioProvider', () => {
     expect(engine.unlock).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
     expect(engine.play).toHaveBeenCalledWith(score)
+  })
+
+  it('并发可信事件共享一次失败解锁，并只让错误边界捕获一次未知错误', async () => {
+    const rejection = { reason: 'unlock failed' }
+    const deferred = createDeferred<MusicUnlockResult>()
+    const engine = createEngine()
+    vi.mocked(engine.unlock).mockReturnValue(deferred.promise)
+    const caughtErrors = vi.fn<(error: Error) => void>()
+    const reactCaughtErrors = vi.fn()
+    const queuedCallbacks: VoidFunction[] = []
+
+    render(
+      <CapturingErrorBoundary onError={caughtErrors}>
+        <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+          <ControllerHarness />
+        </AudioProvider>
+      </CapturingErrorBoundary>,
+      { onCaughtError: reactCaughtErrors },
+    )
+
+    fireEvent.pointerDown(document)
+    fireEvent.keyDown(document)
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+
+    vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
+      queuedCallbacks.push(callback)
+    })
+    await act(async () => {
+      deferred.reject(rejection)
+      await deferred.promise.catch(() => undefined)
+    })
+
+    expect(caughtErrors).toHaveBeenCalledTimes(1)
+    expect(reactCaughtErrors).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByTestId('fatal-error')).toHaveLength(1)
+    expect(screen.getByTestId('fatal-error')).toHaveTextContent('音乐引擎解锁失败')
+    const caughtError = caughtErrors.mock.calls[0]?.[0]
+    expect(caughtError).toBeInstanceOf(Error)
+    expect(caughtError?.cause).toBe(rejection)
+    expect(collectQueuedErrors(queuedCallbacks)).toEqual([])
   })
 
   it.each([
@@ -422,6 +524,68 @@ describe('AudioProvider', () => {
     expect(engine.play).toHaveBeenLastCalledWith(newerScore)
   })
 
+  it('卸载最新场景后恢复仍挂载的上一场景', async () => {
+    const engine = createEngine()
+    const previousScore: MusicScore = { ...score, id: 'previous-theme', bpm: 100 }
+    const latestScore: MusicScore = { ...score, id: 'latest-theme', bpm: 140 }
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <SceneRegistration key="previous" gameScore={previousScore} active />
+        <SceneRegistration key="latest" gameScore={latestScore} active />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      fireEvent.pointerDown(document)
+    })
+    expect(engine.play).toHaveBeenLastCalledWith(latestScore)
+
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <SceneRegistration key="previous" gameScore={previousScore} active />
+      </AudioProvider>,
+    )
+
+    expect(engine.play).toHaveBeenLastCalledWith(previousScore)
+  })
+
+  it('最新无效注册停止播放，卸载后恢复上一有效场景', async () => {
+    const engine = createEngine()
+    const validScore: MusicScore = { ...score, id: 'valid-theme' }
+    const invalidScore: MusicScore = { ...score, id: 'invalid-theme', bpm: 0 }
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <SceneRegistration key="valid" gameScore={validScore} active />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      fireEvent.pointerDown(document)
+    })
+    expect(engine.play).toHaveBeenLastCalledWith(validScore)
+    const playCountBeforeInvalidRegistration = vi.mocked(engine.play).mock.calls.length
+
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <SceneRegistration key="valid" gameScore={validScore} active />
+        <SceneRegistration key="invalid" gameScore={invalidScore} active />
+      </AudioProvider>,
+    )
+
+    expect(engine.stop).toHaveBeenCalled()
+    expect(screen.queryByTestId('fatal-error')).not.toBeInTheDocument()
+    expect(engine.play).not.toHaveBeenCalledWith(invalidScore)
+
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <SceneRegistration key="valid" gameScore={validScore} active />
+      </AudioProvider>,
+    )
+
+    expect(engine.play).toHaveBeenLastCalledWith(validScore)
+    expect(engine.play).toHaveBeenCalledTimes(playCountBeforeInvalidRegistration + 1)
+  })
+
   it('无效曲目立即停止、显示校验错误且绝不交给引擎播放', async () => {
     const engine = createEngine()
     const invalidScore: MusicScore = { ...score, bpm: 0 }
@@ -481,6 +645,39 @@ describe('AudioProvider', () => {
     })
 
     expect(engine.play).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('卸载后到达的解锁拒绝只通过全局错误通道上报一次', async () => {
+    const rejection = 'unlock failed after unmount'
+    const deferred = createDeferred<MusicUnlockResult>()
+    const engine = createEngine()
+    vi.mocked(engine.unlock).mockReturnValue(deferred.promise)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const queuedCallbacks: VoidFunction[] = []
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    fireEvent.pointerDown(document)
+    fireEvent.keyDown(document)
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+    view.unmount()
+    vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
+      queuedCallbacks.push(callback)
+    })
+
+    deferred.reject(rejection)
+    await deferred.promise.catch(() => undefined)
+    await flushPromiseChain()
+
+    const reportedError = readQueuedError(queuedCallbacks)
+    expect(reportedError).toBeInstanceOf(Error)
+    if (!(reportedError instanceof Error)) throw new Error('预期全局上报 Error')
+    expect(reportedError.message).toBe('音乐引擎解锁失败')
+    expect(reportedError.cause).toBe(rejection)
     expect(consoleError).not.toHaveBeenCalled()
   })
 

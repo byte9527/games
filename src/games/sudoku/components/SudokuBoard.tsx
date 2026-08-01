@@ -113,7 +113,12 @@ export function SudokuBoard({
   }
 
   return (
-    <div className="sudoku-board" role="grid" aria-label="九乘九数独棋盘">
+    <div
+      className="sudoku-board"
+      role="grid"
+      aria-label="九乘九数独棋盘"
+      data-puzzle-id={game.puzzleId}
+    >
       {Array.from({ length: CELL_COUNT }, (_, index) => {
         const row = Math.floor(index / SUDOKU_SIZE)
         const col = index % SUDOKU_SIZE

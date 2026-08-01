@@ -384,7 +384,8 @@ describe('SudokuPage', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
       .toBeInTheDocument()
-    expect(storage.clearCalls).toBe(1)
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game.puzzleId).toBe('easy-page-1')
     await waitFor(() => expect(restartButton).toHaveFocus())
   })
 
@@ -402,7 +403,8 @@ describe('SudokuPage', () => {
 
     await user.click(screen.getByRole('button', { name: '重新开始' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(storage.clearCalls).toBe(1)
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game.puzzleId).toBe('easy-page-1')
 
     await user.click(screen.getByRole('button', { name: '换一题' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -415,6 +417,8 @@ describe('SudokuPage', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(puzzles.nextCalls.at(-1)).toEqual({ difficulty: 'medium', previousId: null })
     expect(screen.getByText('难度：中等')).toBeInTheDocument()
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game.puzzleId).toBe('medium-page-1')
   })
 
   it('换题与切换难度共用单层确认并执行准确动作', async () => {
@@ -439,7 +443,8 @@ describe('SudokuPage', () => {
       difficulty: 'easy',
       puzzleId: 'easy-page-2',
     })
-    expect(storage.clearCalls).toBe(1)
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game.puzzleId).toBe('easy-page-2')
     expect(screen.getByRole('button', { name: '第 1 行第 1 列，空格' }))
       .toBeInTheDocument()
     await waitFor(() => expect(newPuzzleButton).toHaveFocus())
@@ -459,7 +464,8 @@ describe('SudokuPage', () => {
       difficulty: 'medium',
       puzzleId: 'medium-page-1',
     })
-    expect(storage.clearCalls).toBe(2)
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game.puzzleId).toBe('medium-page-1')
     await waitFor(() => expect(mediumButton).toHaveFocus())
   })
 

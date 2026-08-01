@@ -7,6 +7,11 @@ async function openGomoku(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: '五子棋' })).toBeVisible()
 }
 
+async function openSudoku(page: Page): Promise<void> {
+  await page.goto('/#/games/sudoku')
+  await expect(page.getByRole('heading', { name: '数独' })).toBeVisible()
+}
+
 function point(page: Page, row: number, col: number) {
   return page.locator(`.intersection[data-row="${row}"][data-col="${col}"]`)
 }
@@ -395,4 +400,206 @@ test('减少动态效果设置会将非必要动画与过渡压缩到近零', as
   }
   expect(seconds(durations.animationDuration)).toBeLessThanOrEqual(0.000_01)
   expect(seconds(durations.transitionDuration)).toBeLessThanOrEqual(0.000_01)
+})
+
+for (const viewport of [
+  { label: '320×740', width: 320, height: 740 },
+  { label: '375×812', width: 375, height: 812 },
+  { label: 'iPhone 13', width: 390, height: 844 },
+  { label: '768px', width: 768, height: 1024 },
+  { label: '1440px', width: 1440, height: 1000 },
+]) {
+  test(`数独在 ${viewport.label} 视口无溢出且棋盘与控制区可操作`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    await openSudoku(page)
+
+    const independentControls = page.locator(
+      '.number-pad button, .sudoku-controls button, .difficulty-selector button',
+    )
+    await expect(independentControls).toHaveCount(17)
+    for (let index = 0; index < 17; index += 1) {
+      await expect(independentControls.nth(index)).toBeVisible()
+    }
+
+    const metrics = await page.evaluate(() => {
+      const board = document.querySelector<HTMLElement>('.sudoku-board')?.getBoundingClientRect()
+      const numberPad = document.querySelector<HTMLElement>('.number-pad')?.getBoundingClientRect()
+      const controls = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.number-pad button, .sudoku-controls button, .difficulty-selector button',
+        ),
+        (button) => {
+          const bounds = button.getBoundingClientRect()
+          return {
+            height: bounds.height,
+            width: bounds.width,
+            left: bounds.left,
+            right: bounds.right,
+          }
+        },
+      )
+      const cell = document.querySelector<HTMLElement>('.sudoku-cell')?.getBoundingClientRect()
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: window.innerWidth,
+        board: board === undefined ? null : {
+          width: board.width,
+          height: board.height,
+          left: board.left,
+          right: board.right,
+        },
+        numberPad: numberPad === undefined ? null : {
+          width: numberPad.width,
+          height: numberPad.height,
+          left: numberPad.left,
+          right: numberPad.right,
+        },
+        cellWidth: cell?.width ?? 0,
+        controls,
+      }
+    })
+
+    expect(metrics.documentWidth).toBeLessThanOrEqual(metrics.viewportWidth)
+    expect(metrics.bodyWidth).toBeLessThanOrEqual(metrics.viewportWidth)
+    expect(metrics.board).not.toBeNull()
+    expect(Math.abs((metrics.board?.width ?? 0) - (metrics.board?.height ?? 0))).toBeLessThanOrEqual(1)
+    expect(metrics.board?.left ?? -1).toBeGreaterThanOrEqual(0)
+    expect(metrics.board?.right ?? Infinity).toBeLessThanOrEqual(metrics.viewportWidth)
+    expect(metrics.numberPad).not.toBeNull()
+    expect(metrics.numberPad?.width ?? 0).toBeGreaterThan(0)
+    expect(metrics.numberPad?.height ?? 0).toBeGreaterThan(0)
+    expect(metrics.numberPad?.left ?? -1).toBeGreaterThanOrEqual(0)
+    expect(metrics.numberPad?.right ?? Infinity).toBeLessThanOrEqual(metrics.viewportWidth)
+    expect(metrics.controls).toHaveLength(17)
+    expect(Math.min(...metrics.controls.map(({ height }) => height))).toBeGreaterThanOrEqual(44)
+    expect(Math.min(...metrics.controls.map(({ width }) => width))).toBeGreaterThan(0)
+    expect(Math.min(...metrics.controls.map(({ left }) => left))).toBeGreaterThanOrEqual(0)
+    expect(Math.max(...metrics.controls.map(({ right }) => right))).toBeLessThanOrEqual(
+      metrics.viewportWidth,
+    )
+    if (viewport.width === 320) {
+      expect(metrics.cellWidth).toBeGreaterThanOrEqual(28)
+      expect(metrics.cellWidth).toBeLessThan(44)
+    }
+  })
+}
+
+test('数独在强制颜色下宫线、焦点和冲突仍可辨识', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', '强制颜色模拟仅在桌面 Chromium 验证')
+  await page.emulateMedia({ forcedColors: 'active' })
+  await openSudoku(page)
+
+  const cellsByRow = await page.getByRole('grid', { name: '九乘九数独棋盘' })
+    .getByRole('button')
+    .evaluateAll((buttons) => {
+      const rows = new Map<number, Array<{ row: number; col: number }>>()
+      for (const button of buttons) {
+        const label = button.getAttribute('aria-label') ?? ''
+        const match = /^第 (\d+) 行第 (\d+) 列，空格/.exec(label)
+        if (match === null) continue
+        const row = Number(match[1])
+        const entry = { row, col: Number(match[2]) }
+        rows.set(row, [...(rows.get(row) ?? []), entry])
+      }
+      return Array.from(rows.values()).find((row) => row.length >= 2)?.slice(0, 2) ?? []
+    })
+  if (cellsByRow.length !== 2) throw new Error('没有两个同行空格用于冲突测试')
+
+  for (const cell of cellsByRow) {
+    await page.getByRole('button', {
+      name: new RegExp(`^第 ${cell.row} 行第 ${cell.col} 列，`),
+    }).click()
+    await page.getByRole('button', { name: '数字 9', exact: true }).click()
+  }
+  const conflictCell = page.getByRole('button', {
+    name: new RegExp(`^第 ${cellsByRow[1]?.row} 行第 ${cellsByRow[1]?.col} 列，玩家数字 9，存在冲突$`),
+  })
+  await conflictCell.focus()
+  await expect(conflictCell).toBeFocused()
+
+  const styles = await page.evaluate(() => {
+    const thickLine = document.querySelector<HTMLElement>(
+      '.sudoku-cell[data-box-col="0"]:not(:nth-child(9n + 1))',
+    )
+    const focused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+    const conflict = document.querySelector<HTMLElement>('.sudoku-cell[data-conflict="true"]')
+    if (thickLine === null || focused === null || conflict === null) return null
+    const thickStyle = getComputedStyle(thickLine)
+    const focusStyle = getComputedStyle(focused)
+    const conflictStyle = getComputedStyle(conflict)
+    return {
+      thickBorderWidth: thickStyle.borderLeftWidth,
+      thickBorderStyle: thickStyle.borderLeftStyle,
+      thickForcedColorAdjust: thickStyle.forcedColorAdjust,
+      focusOutlineStyle: focusStyle.outlineStyle,
+      focusOutlineWidth: focusStyle.outlineWidth,
+      conflictBoxShadow: conflictStyle.boxShadow,
+      conflictForcedColorAdjust: conflictStyle.forcedColorAdjust,
+    }
+  })
+
+  expect(styles).not.toBeNull()
+  expect(styles?.thickBorderStyle).not.toBe('none')
+  expect(parseFloat(styles?.thickBorderWidth ?? '0')).toBeGreaterThanOrEqual(2)
+  expect(styles?.thickForcedColorAdjust).toBe('none')
+  expect(styles?.focusOutlineStyle).not.toBe('none')
+  expect(parseFloat(styles?.focusOutlineWidth ?? '0')).toBeGreaterThan(0)
+  expect(styles?.conflictBoxShadow).not.toBe('none')
+  expect(styles?.conflictForcedColorAdjust).toBe('none')
+})
+
+test('数独减少动态效果时过渡接近零', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await openSudoku(page)
+
+  const durations = await page.evaluate(() => {
+    const elements = [
+      document.querySelector<HTMLElement>('.sudoku-cell'),
+      document.querySelector<HTMLElement>('.number-pad button'),
+    ]
+    return elements.map((element) => {
+      if (element === null) throw new Error('缺少数独动态效果测试元素')
+      const style = getComputedStyle(element)
+      return {
+        animationDuration: style.animationDuration,
+        transitionDuration: style.transitionDuration,
+      }
+    })
+  })
+  const seconds = (value: string): number => value.endsWith('ms')
+    ? parseFloat(value) / 1000
+    : parseFloat(value)
+
+  for (const duration of durations) {
+    expect(seconds(duration.animationDuration)).toBeLessThanOrEqual(0.000_01)
+    expect(seconds(duration.transitionDuration)).toBeLessThanOrEqual(0.000_01)
+  }
+})
+
+test('数独确认弹窗隔离背景并在关闭后恢复触发按钮焦点', async ({ page }) => {
+  await openSudoku(page)
+  const emptyCell = page.getByRole('grid', { name: '九乘九数独棋盘' })
+    .getByRole('button', { name: /，空格/ })
+    .first()
+  await emptyCell.click()
+  await page.getByRole('button', { name: '数字 1', exact: true }).click()
+
+  const restartButton = page.getByRole('button', { name: '重新开始' })
+  await restartButton.focus()
+  await page.keyboard.press('Enter')
+
+  const dialog = page.getByRole('dialog', { name: '重新开始这道题？' })
+  await expect(dialog).toBeVisible()
+  await expect(page.locator('.game-content')).toHaveAttribute('inert', '')
+  await expect(page.locator('.game-content')).toHaveAttribute('aria-hidden', 'true')
+  await expect(page.getByRole('button', { name: '取消' })).toBeFocused()
+
+  await page.getByRole('button', { name: '取消' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('.game-content')).not.toHaveAttribute('inert', '')
+  await expect(page.locator('.game-content')).not.toHaveAttribute('aria-hidden', 'true')
+  await expect(restartButton).toBeFocused()
 })

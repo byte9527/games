@@ -124,7 +124,7 @@ export class SudokuStorage implements SudokuStoragePort {
     game: SudokuGameState,
     savedAt: number,
   ): { readonly ok: boolean } {
-    if (game.status !== 'playing' || game.history.length === 0) return this.clear()
+    if (game.status !== 'playing') return this.clear()
 
     const encoded = encodeStoredSudoku(game, savedAt)
     if (decodeStoredSudoku(encoded, this.provider) === null) {

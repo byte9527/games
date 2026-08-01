@@ -203,8 +203,7 @@ function decodeHistoryEntry(value: unknown): HistoryEntry | null {
 }
 
 function decodeHistory(value: unknown): HistoryEntry[] | null {
-  const history = decodeDenseArray(value, null, decodeHistoryEntry)
-  return history === null || history.length === 0 ? null : history
+  return decodeDenseArray(value, null, decodeHistoryEntry)
 }
 
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -242,8 +241,8 @@ export function encodeStoredSudoku(
 
   // 现有公开 API 会执行完整状态与 history 一致性校验，不在存储层另建平行规则。
   selectCell(game, game.selectedIndex)
-  if (game.status !== 'playing' || game.history.length === 0) {
-    throw new Error('Sudoku active storage requires a playing game with history')
+  if (game.status !== 'playing') {
+    throw new Error('Sudoku active storage requires a playing game')
   }
 
   return {
@@ -305,7 +304,6 @@ export function decodeStoredSudoku(
   if (
     replayed === null ||
     replayed.status !== 'playing' ||
-    replayed.history.length === 0 ||
     !arraysEqual(replayed.values, values) ||
     !arraysEqual(replayed.candidates, candidates)
   ) {

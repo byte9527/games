@@ -33,6 +33,7 @@ describe('SudokuBoard', () => {
     const board = screen.getByRole('grid', { name: '九乘九数独棋盘' })
     const cells = within(board).getAllByRole('button')
 
+    expect(board).toHaveAttribute('data-puzzle-id', game.puzzleId)
     expect(cells).toHaveLength(81)
     expect(cells.every((cell) => cell.tagName === 'BUTTON')).toBe(true)
     expect(cells[0]).toHaveAccessibleName('第 1 行第 1 列，给定数字 5')

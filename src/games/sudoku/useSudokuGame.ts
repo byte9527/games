@@ -353,7 +353,9 @@ export function useSudokuGame({
 
     const next = resetSudokuGame(gameRef.current)
     updateGame(next)
-    if (!storageRef.current.clear().ok) showStorageUnavailableNotice()
+    if (!storageRef.current.save(next, readSavedAt()).ok) {
+      showStorageUnavailableNotice()
+    }
     startVisibleTiming()
   }, [materializeVisibleFragment, readElapsedNow, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 
@@ -371,9 +373,9 @@ export function useSudokuGame({
     stopTimer()
 
     const recentResult = storageRef.current.savePreviousPuzzleId(difficulty, puzzle.id)
-    const clearResult = storageRef.current.clear()
+    const saveResult = storageRef.current.save(next, readSavedAt())
     updateGame(next)
-    if (!recentResult.ok || !clearResult.ok) showStorageUnavailableNotice()
+    if (!recentResult.ok || !saveResult.ok) showStorageUnavailableNotice()
     startVisibleTiming()
   }, [materializeVisibleFragment, readElapsedNow, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 

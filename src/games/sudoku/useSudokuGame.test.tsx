@@ -687,7 +687,7 @@ describe('useSudokuGame', () => {
     }
   })
 
-  it('restart 重置当前题全部交互与计时、清档并重新开始可见计时', () => {
+  it('restart 重置并保存当前题全部交互与计时，重新开始可见计时', () => {
     const visibility = installVisibility('visible')
     try {
       const clock = new FakeClock()
@@ -710,7 +710,8 @@ describe('useSudokuGame', () => {
       expect(result.current.game.selectedIndex).toBe(0)
       expect(result.current.game.noteMode).toBe(false)
       expect(result.current.elapsedMs).toBe(0)
-      expect(storage.clearCalls).toBe(1)
+      expect(storage.clearCalls).toBe(0)
+      expect(storage.saved.at(-1)?.game).toEqual(result.current.game)
       expect(clock.activeTimerCount).toBe(1)
 
       act(() => clock.advance(1_000))
@@ -720,7 +721,7 @@ describe('useSudokuGame', () => {
     }
   })
 
-  it('同难度换题跳过当前 ID，先保存 recent 再清活动存档', () => {
+  it('同难度换题跳过当前 ID，并保存 recent 与新题初态', () => {
     const storage = new FakeStorage()
     const puzzles = new QueuePuzzles([EASY_PUZZLE, SECOND_EASY_PUZZLE])
     const { result } = renderHook(() => useSudokuGame({ storage, puzzles, clock: idleClock }))
@@ -736,7 +737,8 @@ describe('useSudokuGame', () => {
       { difficulty: 'easy', puzzleId: EASY_PUZZLE.id },
       { difficulty: 'easy', puzzleId: SECOND_EASY_PUZZLE.id },
     ])
-    expect(storage.clearCalls).toBe(1)
+    expect(storage.clearCalls).toBe(0)
+    expect(storage.saved.at(-1)?.game).toEqual(result.current.game)
     expect(result.current.game.puzzleId).toBe(SECOND_EASY_PUZZLE.id)
   })
 
@@ -757,10 +759,10 @@ describe('useSudokuGame', () => {
     expect(result.current.game.difficulty).toBe('medium')
   })
 
-  it('recent 或 clear 失败不回滚新题并保留自动保存提示', () => {
+  it('recent 或新题保存失败不回滚新题并保留自动保存提示', () => {
     const storage = new FakeStorage()
     storage.recentSaveOk = false
-    storage.clearOk = false
+    storage.saveOk = false
     const puzzles = new QueuePuzzles([EASY_PUZZLE, SECOND_EASY_PUZZLE])
     const { result } = renderHook(() => useSudokuGame({ storage, puzzles, clock: idleClock }))
 

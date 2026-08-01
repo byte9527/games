@@ -387,7 +387,7 @@ describe('sudoku storage schema', () => {
     expect(decodeStoredSudoku(jointlyForged, builtinSudokuPuzzleProvider)).toBeNull()
   })
 
-  it('拒绝回放完成态和无历史初态', () => {
+  it('拒绝回放完成态但接受无历史的进行中初态', () => {
     const completed = completedGame()
 
     const completedStored = {
@@ -417,12 +417,24 @@ describe('sudoku storage schema', () => {
       elapsedMs: initial.elapsedMs,
       savedAt: 1,
     }
-    expect(decodeStoredSudoku(initialStored, builtinSudokuPuzzleProvider)).toBeNull()
+    expect(decodeStoredSudoku(initialStored, builtinSudokuPuzzleProvider)).toEqual({
+      game: initial,
+      savedAt: 1,
+    })
+
+    const forgedValues = [...initial.values]
+    const emptyIndex = forgedValues.findIndex((value) => value === null)
+    if (emptyIndex < 0) throw new Error('测试初态必须包含空格')
+    forgedValues[emptyIndex] = 1
+    expect(decodeStoredSudoku(
+      { ...initialStored, values: forgedValues },
+      builtinSudokuPuzzleProvider,
+    )).toBeNull()
   })
 
-  it('encode 对非法 savedAt、初态、完成态和被篡改状态抛出清晰错误', () => {
+  it('encode 接受进行中初态，并对非法 savedAt、完成态和被篡改状态抛出清晰错误', () => {
     expect(() => encodeStoredSudoku(activeGame(), -1)).toThrow(/savedAt/)
-    expect(() => encodeStoredSudoku(initialGame(), 1)).toThrow(/active/)
+    expect(encodeStoredSudoku(initialGame(), 1)).toMatchObject({ history: [] })
     expect(() => encodeStoredSudoku(completedGame(), 1)).toThrow(/active/)
 
     const invalid = { ...activeGame(), elapsedMs: -1 }
@@ -454,6 +466,17 @@ describe('SudokuStorage active game', () => {
     expect(backing.setCalls).toBe(1)
     expect(backing.values.has(ACTIVE_SUDOKU_STORAGE_KEY)).toBe(true)
     expect(storage.load()).toEqual({ kind: 'loaded', game, savedAt: 88_000 })
+  })
+
+  it('保存并加载无历史的进行中初态以保留当前题目标识', () => {
+    const backing = new MemoryStorage()
+    const storage = new SudokuStorage(backing)
+    const game = initialGame()
+
+    expect(storage.save(game, 77_000)).toEqual({ ok: true })
+    expect(backing.setCalls).toBe(1)
+    expect(backing.removeCalls).toBe(0)
+    expect(storage.load()).toEqual({ kind: 'loaded', game, savedAt: 77_000 })
   })
 
   it.each([
@@ -494,24 +517,21 @@ describe('SudokuStorage active game', () => {
     expect(new SudokuStorage(backing).save(activeGame(), 1)).toEqual({ ok: false })
   })
 
-  it.each([
-    { name: '初始棋局', game: initialGame() },
-    { name: '完成棋局', game: completedGame() },
-  ])('$name 的 save 只清除活动键且不 set', ({ game }) => {
+  it('完成棋局的 save 只清除活动键且不 set', () => {
     const backing = new MemoryStorage()
     backing.values.set(ACTIVE_SUDOKU_STORAGE_KEY, 'old')
 
-    expect(new SudokuStorage(backing).save(game, 1)).toEqual({ ok: true })
+    expect(new SudokuStorage(backing).save(completedGame(), 1)).toEqual({ ok: true })
     expect(backing.removeCalls).toBe(1)
     expect(backing.setCalls).toBe(0)
     expect(backing.values.has(ACTIVE_SUDOKU_STORAGE_KEY)).toBe(false)
   })
 
-  it('清理型 save 的 removeItem 失败时返回 ok=false', () => {
+  it('完成棋局清理型 save 的 removeItem 失败时返回 ok=false', () => {
     const backing = new MemoryStorage()
     backing.removeError = new Error('blocked')
 
-    expect(new SudokuStorage(backing).save(initialGame(), 1)).toEqual({ ok: false })
+    expect(new SudokuStorage(backing).save(completedGame(), 1)).toEqual({ ok: false })
     expect(backing.setCalls).toBe(0)
   })
 

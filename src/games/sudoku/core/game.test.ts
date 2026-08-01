@@ -358,7 +358,7 @@ describe('sudoku game', () => {
       }
 
       expect(() => undo(malformedState)).toThrowError(
-        'Sudoku history change after state does not match current cell at index 2',
+        'Sudoku game state history does not match values, candidates, and status',
       )
     })
   })
@@ -429,6 +429,94 @@ describe('sudoku game', () => {
         )
         expect(() => replaySudokuHistory(malformed, [])).toThrowError(
           `Sudoku candidate mask at index 2 must be an integer between 0 and 511; received ${String(mask)}`,
+        )
+      }
+    })
+  })
+
+  describe('公开状态完整一致性', () => {
+    it('拒绝 history 和正式数字快照同时被篡改的状态', () => {
+      const game = createGame()
+      const values = [...game.values]
+      values[2] = 4
+      values[3] = 6
+      const malformed: SudokuGameState = {
+        ...game,
+        values,
+        history: [
+          {
+            changes: [
+              {
+                index: 2,
+                beforeValue: null,
+                afterValue: 4,
+                beforeCandidates: 0,
+                afterCandidates: 0,
+              },
+              {
+                index: 3,
+                beforeValue: null,
+                afterValue: 6,
+                beforeCandidates: 0,
+                afterCandidates: 0,
+              },
+            ],
+          },
+        ],
+      }
+
+      expect(() => selectCell(malformed, 4)).toThrowError(
+        'Sudoku game state history does not match values, candidates, and status',
+      )
+    })
+
+    it('所有公开状态操作都拒绝早期 history 非法而最后 entry 表面合法的状态', () => {
+      const game = createGame()
+      const candidates = [...game.candidates]
+      candidates[2] = 1 << 4
+      const malformed: SudokuGameState = {
+        ...game,
+        candidates,
+        selectedIndex: 2,
+        history: [
+          {
+            changes: [
+              {
+                index: 2,
+                beforeValue: null,
+                afterValue: null,
+                beforeCandidates: 0,
+                afterCandidates: (1 << 3) | (1 << 4),
+              },
+            ],
+          },
+          {
+            changes: [
+              {
+                index: 2,
+                beforeValue: null,
+                afterValue: null,
+                beforeCandidates: (1 << 3) | (1 << 4),
+                afterCandidates: 1 << 4,
+              },
+            ],
+          },
+        ],
+      }
+      const operations = [
+        { name: 'selectCell', run: () => selectCell(malformed, 3) },
+        { name: 'moveSelection', run: () => moveSelection(malformed, 'right') },
+        { name: 'toggleNoteMode', run: () => toggleNoteMode(malformed) },
+        { name: 'enterDigit', run: () => enterDigit(malformed, 4) },
+        { name: 'eraseSelected', run: () => eraseSelected(malformed) },
+        { name: 'undo', run: () => undo(malformed) },
+        { name: 'resetSudokuGame', run: () => resetSudokuGame(malformed) },
+        { name: 'withElapsedMs', run: () => withElapsedMs(malformed, 1) },
+      ]
+
+      for (const operation of operations) {
+        expect(operation.run, operation.name).toThrowError(
+          'Sudoku game state history does not match values, candidates, and status',
         )
       }
     })
@@ -542,6 +630,193 @@ describe('sudoku game', () => {
           replaceChange(firstEntry, { afterValue: 4, afterCandidates: 1 }),
         ]),
       ).toBeNull()
+    })
+
+    it('拒绝单条 entry 同时修改两个正式数字', () => {
+      const initial = createGame()
+      const history: readonly HistoryEntry[] = [
+        {
+          changes: [
+            {
+              index: 2,
+              beforeValue: null,
+              afterValue: 4,
+              beforeCandidates: 0,
+              afterCandidates: 0,
+            },
+            {
+              index: 3,
+              beforeValue: null,
+              afterValue: 6,
+              beforeCandidates: 0,
+              afterCandidates: 0,
+            },
+          ],
+        },
+      ]
+
+      expect(replaySudokuHistory(initial, history)).toBeNull()
+    })
+
+    it('拒绝单次候选操作从零切换多个 bit', () => {
+      const initial = createGame()
+      const history: readonly HistoryEntry[] = [
+        {
+          changes: [
+            {
+              index: 2,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 0,
+              afterCandidates: (1 << 3) | (1 << 4),
+            },
+          ],
+        },
+      ]
+
+      expect(replaySudokuHistory(initial, history)).toBeNull()
+    })
+
+    it('拒绝正式输入漏记应自动清理的 peer 候选', () => {
+      const initial = createGame()
+      const history: readonly HistoryEntry[] = [
+        {
+          changes: [
+            {
+              index: 3,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 0,
+              afterCandidates: 1 << 3,
+            },
+          ],
+        },
+        {
+          changes: [
+            {
+              index: 2,
+              beforeValue: null,
+              afterValue: 4,
+              beforeCandidates: 0,
+              afterCandidates: 0,
+            },
+          ],
+        },
+      ]
+
+      expect(replaySudokuHistory(initial, history)).toBeNull()
+    })
+
+    it('拒绝没有对应正式输入却在单条 entry 中删除多个 peer 候选', () => {
+      const initial = createGame()
+      const history: readonly HistoryEntry[] = [
+        {
+          changes: [
+            {
+              index: 3,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 0,
+              afterCandidates: 1 << 3,
+            },
+          ],
+        },
+        {
+          changes: [
+            {
+              index: 11,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 0,
+              afterCandidates: 1 << 3,
+            },
+          ],
+        },
+        {
+          changes: [
+            {
+              index: 3,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 1 << 3,
+              afterCandidates: 0,
+            },
+            {
+              index: 11,
+              beforeValue: null,
+              afterValue: null,
+              beforeCandidates: 1 << 3,
+              afterCandidates: 0,
+            },
+          ],
+        },
+      ]
+
+      expect(replaySudokuHistory(initial, history)).toBeNull()
+    })
+
+    it.each([
+      {
+        name: '已有进度但 history 为空',
+        create: () => {
+          const initial = createGame()
+          const values = [...initial.values]
+          values[2] = 4
+          return { ...initial, values }
+        },
+      },
+      {
+        name: '存在非零 candidates',
+        create: () => {
+          const initial = createGame()
+          const candidates = [...initial.candidates]
+          candidates[2] = 1 << 3
+          return { ...initial, candidates }
+        },
+      },
+      {
+        name: 'history 非空',
+        create: () => {
+          const initial = createGame()
+          const entered = enterDigit(selectCell(initial, 2), 4)
+          return { ...initial, history: entered.history }
+        },
+      },
+      {
+        name: 'status 不是 playing',
+        create: () => ({ ...createGame(), status: 'completed' as const }),
+      },
+      {
+        name: 'elapsedMs 非零',
+        create: () => ({ ...createGame(), elapsedMs: 1 }),
+      },
+      {
+        name: 'selectedIndex 不是零',
+        create: () => ({ ...createGame(), selectedIndex: 1 }),
+      },
+      {
+        name: 'noteMode 已开启',
+        create: () => ({ ...createGame(), noteMode: true }),
+      },
+    ])('拒绝非真正初始态：$name', ({ create }) => {
+      expect(replaySudokuHistory(create(), [])).toBeNull()
+    })
+
+    it('回放只复制实际变化的数组并始终复用 givens', () => {
+      const initial = createGame()
+      const noted = enterDigit(toggleNoteMode(selectCell(initial, 2)), 4)
+      const replayedNote = replaySudokuHistory(initial, noted.history)
+
+      expect(replayedNote?.givens).toBe(initial.givens)
+      expect(replayedNote?.values).toBe(initial.values)
+      expect(replayedNote?.candidates).not.toBe(initial.candidates)
+
+      const entered = enterDigit(selectCell(initial, 2), 4)
+      const replayedValue = replaySudokuHistory(initial, entered.history)
+
+      expect(replayedValue?.givens).toBe(initial.givens)
+      expect(replayedValue?.values).not.toBe(initial.values)
+      expect(replayedValue?.candidates).toBe(initial.candidates)
     })
 
     it('拒绝在某条历史完成棋局后继续追加编辑', () => {

@@ -204,15 +204,190 @@ const assertHistoryStructure = (
 const statusFor = (values: readonly CellValue[]): GameStatus =>
   isSolvedBoard(values) ? 'completed' : 'playing'
 
-const assertState = (state: SudokuGameState): void => {
+interface ReplayResult {
+  readonly values: readonly CellValue[]
+  readonly candidates: readonly CandidateMask[]
+  readonly history: readonly HistoryEntry[]
+  readonly status: GameStatus
+}
+
+const arraysEqual = <T>(left: readonly T[], right: readonly T[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
+const changesEqual = (
+  left: readonly CellChange[],
+  right: readonly CellChange[],
+): boolean =>
+  left.length === right.length &&
+  left.every((change, index) => {
+    const other = right[index]
+    return (
+      other !== undefined &&
+      change.index === other.index &&
+      change.beforeValue === other.beforeValue &&
+      change.afterValue === other.afterValue &&
+      change.beforeCandidates === other.beforeCandidates &&
+      change.afterCandidates === other.afterCandidates
+    )
+  })
+
+const isSingleCandidateBit = (mask: number): boolean =>
+  mask > 0 && (mask & (mask - 1)) === 0
+
+const expectedFormalChanges = (
+  values: readonly CellValue[],
+  candidates: readonly CandidateMask[],
+  index: number,
+  digit: Digit,
+): readonly CellChange[] => {
+  const digitMask = 1 << (digit - 1)
+  const changes: CellChange[] = [
+    {
+      index,
+      beforeValue: values[index],
+      afterValue: digit,
+      beforeCandidates: candidates[index],
+      afterCandidates: 0,
+    },
+  ]
+
+  for (const peerIndex of peerIndices(index)) {
+    const beforeCandidates = candidates[peerIndex]
+    if (values[peerIndex] !== null || (beforeCandidates & digitMask) === 0) continue
+
+    changes.push({
+      index: peerIndex,
+      beforeValue: null,
+      afterValue: null,
+      beforeCandidates,
+      afterCandidates: beforeCandidates & ~digitMask,
+    })
+  }
+
+  return changes.sort((left, right) => left.index - right.index)
+}
+
+const applySemanticEntry = (
+  givens: readonly CellValue[],
+  values: readonly CellValue[],
+  candidates: readonly CandidateMask[],
+  entry: HistoryEntry,
+): Pick<ReplayResult, 'values' | 'candidates' | 'status'> | null => {
+  for (const change of entry.changes) {
+    if (
+      givens[change.index] !== null ||
+      values[change.index] !== change.beforeValue ||
+      candidates[change.index] !== change.beforeCandidates
+    ) {
+      return null
+    }
+  }
+
+  const valueChanges = entry.changes.filter(
+    ({ beforeValue, afterValue }) => beforeValue !== afterValue,
+  )
+  let matchesLegalAction = false
+
+  if (valueChanges.length === 1) {
+    const primaryChange = valueChanges[0]
+    if (primaryChange === undefined) return null
+
+    if (primaryChange.afterValue !== null) {
+      const expected = expectedFormalChanges(
+        values,
+        candidates,
+        primaryChange.index,
+        primaryChange.afterValue,
+      )
+      matchesLegalAction = changesEqual(entry.changes, expected)
+    } else {
+      matchesLegalAction =
+        entry.changes.length === 1 &&
+        primaryChange.beforeValue !== null &&
+        primaryChange.beforeCandidates === 0 &&
+        primaryChange.afterCandidates === 0
+    }
+  } else if (valueChanges.length === 0 && entry.changes.length === 1) {
+    const change = entry.changes[0]
+    if (change === undefined) return null
+
+    const toggledBits = change.beforeCandidates ^ change.afterCandidates
+    const isCandidateToggle =
+      change.beforeValue === null &&
+      change.afterValue === null &&
+      isSingleCandidateBit(toggledBits)
+    const isCandidateErase =
+      change.beforeValue === null &&
+      change.afterValue === null &&
+      change.beforeCandidates > 0 &&
+      change.afterCandidates === 0
+    matchesLegalAction = isCandidateToggle || isCandidateErase
+  }
+
+  if (!matchesLegalAction) return null
+
+  let nextValues: CellValue[] | null = null
+  let nextCandidates: CandidateMask[] | null = null
+
+  for (const change of entry.changes) {
+    if (change.beforeValue !== change.afterValue) {
+      nextValues ??= [...values]
+      nextValues[change.index] = change.afterValue
+    }
+    if (change.beforeCandidates !== change.afterCandidates) {
+      nextCandidates ??= [...candidates]
+      nextCandidates[change.index] = change.afterCandidates
+    }
+  }
+
+  const appliedValues = nextValues ?? values
+  return {
+    values: appliedValues,
+    candidates: nextCandidates ?? candidates,
+    status: statusFor(appliedValues),
+  }
+}
+
+const replaySemanticHistory = (
+  givens: readonly CellValue[],
+  initialValues: readonly CellValue[],
+  initialCandidates: readonly CandidateMask[],
+  history: readonly HistoryEntry[],
+): ReplayResult | null => {
+  if (!Array.isArray(history)) return null
+
+  let values = initialValues
+  let candidates = initialCandidates
+  let status = statusFor(values)
+  const replayedHistory: HistoryEntry[] = []
+
+  for (let entryIndex = 0; entryIndex < history.length; entryIndex += 1) {
+    if (status === 'completed' || !Object.hasOwn(history, entryIndex)) return null
+
+    const entry = parseHistoryEntry(history[entryIndex])
+    if (entry === null) return null
+
+    const applied = applySemanticEntry(givens, values, candidates, entry)
+    if (applied === null) return null
+
+    values = applied.values
+    candidates = applied.candidates
+    status = applied.status
+    replayedHistory.push(entry)
+  }
+
+  return { values, candidates, history: replayedHistory, status }
+}
+
+const assertStateStructure = (state: SudokuGameState): void => {
   if (!isRecord(state)) throw new Error('Sudoku game state must be an object')
 
   assertPuzzleId(state.puzzleId)
   assertDifficulty(state.difficulty)
-  conflictIndices(state.givens)
+  const givenConflicts = conflictIndices(state.givens)
   conflictIndices(state.values)
 
-  if (conflictIndices(state.givens).size > 0) {
+  if (givenConflicts.size > 0) {
     throw new Error('Sudoku givens must not contain conflicts')
   }
   if (!state.givens.some((value) => value === null)) {
@@ -236,12 +411,36 @@ const assertState = (state: SudokuGameState): void => {
   assertHistoryStructure(state.history, state.givens)
   assertElapsedMs(state.elapsedMs)
 
-  const expectedStatus = statusFor(state.values)
-  if (state.status !== expectedStatus) {
+  if (state.status !== 'playing' && state.status !== 'completed') {
     throw new Error(
-      `Sudoku status must be ${expectedStatus} for the current board; received ${formatValue(state.status)}`,
+      `Sudoku status must be playing or completed; received ${formatValue(state.status)}`,
     )
   }
+}
+
+const assertState = (state: SudokuGameState): void => {
+  assertStateStructure(state)
+
+  const initialCandidates = Array.from({ length: CELL_COUNT }, () => 0)
+  const replayed = replaySemanticHistory(
+    state.givens,
+    state.givens,
+    initialCandidates,
+    state.history,
+  )
+
+  if (
+    replayed !== null &&
+    arraysEqual(replayed.values, state.values) &&
+    arraysEqual(replayed.candidates, state.candidates) &&
+    replayed.status === state.status
+  ) {
+    return
+  }
+
+  throw new Error(
+    'Sudoku game state history does not match values, candidates, and status',
+  )
 }
 
 const appendEdit = (
@@ -256,11 +455,6 @@ const appendEdit = (
   history: [...state.history, { changes }],
   status: statusFor(values),
 })
-
-const cloneHistory = (history: readonly HistoryEntry[]): readonly HistoryEntry[] =>
-  history.map((entry) => ({
-    changes: entry.changes.map((change) => ({ ...change })),
-  }))
 
 export const createSudokuGame = (
   puzzleId: string,
@@ -538,46 +732,32 @@ export const replaySudokuHistory = (
   initialState: SudokuGameState,
   history: readonly HistoryEntry[],
 ): SudokuGameState | null => {
-  assertState(initialState)
-  if (!Array.isArray(history)) return null
+  assertStateStructure(initialState)
 
-  const values = [...initialState.values]
-  const candidates = [...initialState.candidates]
-  const replayedHistory: HistoryEntry[] = []
-  let status = initialState.status
+  const isTrueInitialState =
+    arraysEqual(initialState.values, initialState.givens) &&
+    initialState.candidates.every((mask) => mask === 0) &&
+    initialState.history.length === 0 &&
+    initialState.selectedIndex === 0 &&
+    initialState.noteMode === false &&
+    initialState.elapsedMs === 0 &&
+    initialState.status === 'playing'
+  if (!isTrueInitialState) return null
 
-  for (let entryIndex = 0; entryIndex < history.length; entryIndex += 1) {
-    if (status === 'completed') return null
-    if (!Object.hasOwn(history, entryIndex)) return null
-
-    const entry = parseHistoryEntry(history[entryIndex])
-    if (entry === null) return null
-
-    for (const change of entry.changes) {
-      const given = initialState.givens[change.index]
-      if (given !== null) return null
-      if (
-        values[change.index] !== change.beforeValue ||
-        candidates[change.index] !== change.beforeCandidates
-      ) {
-        return null
-      }
-    }
-
-    for (const change of entry.changes) {
-      values[change.index] = change.afterValue
-      candidates[change.index] = change.afterCandidates
-    }
-    replayedHistory.push(entry)
-    status = statusFor(values)
-  }
+  const replayed = replaySemanticHistory(
+    initialState.givens,
+    initialState.values,
+    initialState.candidates,
+    history,
+  )
+  if (replayed === null) return null
 
   return {
     ...initialState,
-    givens: [...initialState.givens],
-    values,
-    candidates,
-    history: cloneHistory(replayedHistory),
-    status,
+    givens: initialState.givens,
+    values: replayed.values,
+    candidates: replayed.candidates,
+    history: replayed.history,
+    status: replayed.status,
   }
 }

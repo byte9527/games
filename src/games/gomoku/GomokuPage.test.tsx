@@ -1,12 +1,29 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode } from 'react'
+import { StrictMode, type ReactElement } from 'react'
 
+import { AudioProvider } from '../../audio/AudioProvider'
+import type { MusicEnginePort } from '../../audio/core/MusicEnginePort'
+import type { MusicPreferenceStoragePort } from '../../audio/storage/musicPreferenceStorage'
+import { gomokuMusicScore } from './audio/gomokuMusicScore'
 import { ResultDialog } from './components/ResultDialog'
 import { createGame, placeStone, replayMoves } from './core/game'
 import { BOARD_SIZE, type GameState, type Move, type Position } from './core/types'
 import { type GomokuStoragePort, type LoadResult, type SaveResult } from './storage/storage'
 import { GomokuPage } from './GomokuPage'
+
+const audioEngine = {
+  unlock: vi.fn<MusicEnginePort['unlock']>(),
+  play: vi.fn<MusicEnginePort['play']>(),
+  pause: vi.fn<MusicEnginePort['pause']>(),
+  stop: vi.fn<MusicEnginePort['stop']>(),
+  dispose: vi.fn<MusicEnginePort['dispose']>(),
+} satisfies MusicEnginePort
+
+const audioPreferenceStorage = {
+  load: vi.fn<MusicPreferenceStoragePort['load']>(),
+  save: vi.fn<MusicPreferenceStoragePort['save']>(),
+} satisfies MusicPreferenceStoragePort
 
 class FakeStorage implements GomokuStoragePort {
   readonly savedStates: GameState[] = []
@@ -109,8 +126,16 @@ function drawGame(): GameState {
   return game
 }
 
+function withAudio(ui: ReactElement): ReactElement {
+  return (
+    <AudioProvider engineFactory={() => audioEngine} storage={audioPreferenceStorage}>
+      {ui}
+    </AudioProvider>
+  )
+}
+
 function renderPage(storage: GomokuStoragePort = new FakeStorage({ kind: 'empty' })) {
-  return render(<GomokuPage storage={storage} />)
+  return render(withAudio(<GomokuPage storage={storage} />))
 }
 
 function getBoardButtons(): HTMLElement[] {
@@ -120,7 +145,12 @@ function getBoardButtons(): HTMLElement[] {
 
 describe('GomokuPage', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     window.localStorage.clear()
+    audioEngine.unlock.mockResolvedValue({ ok: true })
+    audioEngine.dispose.mockResolvedValue()
+    audioPreferenceStorage.load.mockReturnValue({ kind: 'loaded', enabled: true })
+    audioPreferenceStorage.save.mockReturnValue({ ok: true })
   })
 
   it('组装页面标题、hash 返回链接、225 点棋盘和黑方回合', () => {
@@ -141,10 +171,98 @@ describe('GomokuPage', () => {
   })
 
   it('未注入存储时通过浏览器存储工厂完成页面 smoke', () => {
-    render(<GomokuPage />)
+    render(withAudio(<GomokuPage />))
 
     expect(screen.getByRole('heading', { level: 1, name: '五子棋' })).toBeInTheDocument()
     expect(getBoardButtons()).toHaveLength(225)
+  })
+
+  it('进行中棋局解锁后播放，终局暂停，悔棋和再来一局恢复播放', async () => {
+    const user = userEvent.setup()
+    renderPage(new FakeStorage({ kind: 'loaded', state: blackNearWin() }))
+
+    fireEvent.pointerDown(document)
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(1))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore)
+
+    await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
+    await waitFor(() => expect(audioEngine.pause).toHaveBeenLastCalledWith(0.8))
+
+    await user.click(screen.getByRole('button', { name: '悔棋一步' }))
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(2))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore)
+
+    await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
+    await waitFor(() => expect(audioEngine.pause).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByRole('button', { name: '再来一局' }))
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(3))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore)
+  })
+
+  it.each([
+    ['胜局', blackWin()],
+    ['和棋', drawGame()],
+  ] as const)('%s初始页面解锁后不播放并按曲目时长暂停', async (_name, game) => {
+    renderPage(new FakeStorage({ kind: 'loaded', state: game }))
+
+    fireEvent.pointerDown(document)
+
+    await waitFor(() => expect(audioEngine.pause).toHaveBeenLastCalledWith(0.8))
+    expect(audioEngine.play).not.toHaveBeenCalled()
+  })
+
+  it('音频不可用时提示并禁用音乐按钮，但棋局仍可继续', async () => {
+    const user = userEvent.setup()
+    audioEngine.unlock.mockResolvedValue({ ok: false, kind: 'unavailable' })
+    renderPage()
+
+    fireEvent.pointerDown(document)
+
+    const unavailableMessage = await screen.findByText(
+      '当前浏览器无法播放音乐。',
+      { selector: '[role="status"]' },
+    )
+    const musicToggle = screen.getByRole('button', { name: '音乐' })
+    expect(unavailableMessage).toBeInTheDocument()
+    expect(musicToggle).toBeDisabled()
+    expect(musicToggle).toHaveAccessibleDescription('当前浏览器无法播放音乐。')
+
+    await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
+    expect(screen.getByRole('button', { name: '第 8 行第 8 列，黑棋，最后一步' }))
+      .toBeDisabled()
+    expect(screen.getByText('白方回合')).toBeInTheDocument()
+  })
+
+  it('音乐偏好关闭时棋盘操作不解锁，点击音乐按钮后解锁并播放', async () => {
+    const user = userEvent.setup()
+    audioPreferenceStorage.load.mockReturnValue({ kind: 'loaded', enabled: false })
+    renderPage()
+
+    const musicToggle = screen.getByRole('button', { name: '音乐' })
+    expect(musicToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(musicToggle).toHaveTextContent('音乐关')
+
+    await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
+    expect(audioEngine.unlock).not.toHaveBeenCalled()
+
+    await user.click(musicToggle)
+
+    await waitFor(() => expect(audioEngine.unlock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore))
+    expect(musicToggle).toHaveAttribute('aria-pressed', 'true')
+    expect(musicToggle).toHaveTextContent('音乐开')
+  })
+
+  it('页面离开时注销当前音乐场景并停止引擎', async () => {
+    const view = render(withAudio(<GomokuPage />))
+    fireEvent.pointerDown(document)
+    await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore))
+    audioEngine.stop.mockClear()
+
+    view.rerender(withAudio(<div>占位内容</div>))
+
+    await waitFor(() => expect(audioEngine.stop).toHaveBeenCalledTimes(1))
+    expect(audioEngine.dispose).not.toHaveBeenCalled()
   })
 
   it('空棋局重新开始不弹确认并直接清除存档', async () => {
@@ -222,7 +340,7 @@ describe('GomokuPage', () => {
 
   it('StrictMode effect replay 后取消确认仍恢复首次弹窗外焦点', async () => {
     const user = userEvent.setup()
-    render(
+    render(withAudio(
       <StrictMode>
         <GomokuPage
           storage={new FakeStorage({
@@ -231,7 +349,7 @@ describe('GomokuPage', () => {
           })}
         />
       </StrictMode>,
-    )
+    ))
     const restartButton = screen.getByRole('button', { name: '重新开始' })
 
     await user.click(restartButton)
@@ -257,7 +375,9 @@ describe('GomokuPage', () => {
 
   it('空棋局禁用悔棋，普通悔棋撤销最近一手并恢复回合', async () => {
     const user = userEvent.setup()
-    const emptyPage = render(<GomokuPage storage={new FakeStorage({ kind: 'empty' })} />)
+    const emptyPage = render(withAudio(
+      <GomokuPage storage={new FakeStorage({ kind: 'empty' })} />,
+    ))
     expect(screen.getByRole('button', { name: '悔棋' })).toBeDisabled()
 
     emptyPage.unmount()
@@ -319,11 +439,11 @@ describe('GomokuPage', () => {
         if (state.status === 'won') winningPointToBlur?.blur()
       },
     )
-    render(
+    render(withAudio(
       <StrictMode>
         <GomokuPage storage={storage} />
       </StrictMode>,
-    )
+    ))
     const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
     if (!(winningPoint instanceof HTMLButtonElement)) throw new Error('棋位应当是原生按钮')
     winningPointToBlur = winningPoint
@@ -342,16 +462,18 @@ describe('GomokuPage', () => {
   it('结果弹窗打开时隔离背景并阻止底层重新开始', async () => {
     const user = userEvent.setup()
     const storage = new FakeStorage({ kind: 'loaded', state: blackNearWin() })
-    const view = render(<GomokuPage storage={storage} />)
+    const view = render(withAudio(<GomokuPage storage={storage} />))
     const restartButton = screen.getByRole('button', { name: '重新开始' })
     const winningPoint = screen.getByRole('button', { name: '第 8 行第 8 列，空位' })
 
     await user.click(winningPoint)
 
     const gameContent = view.container.querySelector('.game-content')
+    const musicToggle = screen.getByRole('button', { name: '音乐', hidden: true })
     expect(gameContent).toBeInTheDocument()
     expect(gameContent).toHaveAttribute('inert')
     expect(gameContent).toHaveAttribute('aria-hidden', 'true')
+    expect(gameContent).toContainElement(musicToggle)
 
     act(() => restartButton.click())
 
@@ -438,7 +560,7 @@ describe('GomokuPage', () => {
 
   it('确认弹窗关闭后移除背景隔离并恢复焦点', async () => {
     const user = userEvent.setup()
-    const view = render(
+    const view = render(withAudio(
       <StrictMode>
         <GomokuPage
           storage={new FakeStorage({
@@ -447,13 +569,15 @@ describe('GomokuPage', () => {
           })}
         />
       </StrictMode>,
-    )
+    ))
     const restartButton = screen.getByRole('button', { name: '重新开始' })
 
     await user.click(restartButton)
     const gameContent = view.container.querySelector('.game-content')
+    const musicToggle = screen.getByRole('button', { name: '音乐', hidden: true })
     expect(gameContent).toHaveAttribute('inert')
     expect(gameContent).toHaveAttribute('aria-hidden', 'true')
+    expect(gameContent).toContainElement(musicToggle)
 
     await user.click(screen.getByRole('button', { name: '取消' }))
 

@@ -1,5 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
 
+import { useAudioController } from '../../audio/AudioProvider'
+import { MusicToggle } from '../../audio/MusicToggle'
+import { useGameMusic } from '../../audio/useGameMusic'
+import { gomokuMusicScore } from './audio/gomokuMusicScore'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { GameControls } from './components/GameControls'
 import { GomokuBoard } from './components/GomokuBoard'
@@ -19,11 +23,22 @@ export function GomokuPage({ storage }: { readonly storage?: GomokuStoragePort }
     [storage],
   )
   const controller = useGomokuGame(resolvedStorage)
+  const audio = useAudioController()
+  useGameMusic(gomokuMusicScore, controller.game.status === 'playing')
   const [confirmRestart, setConfirmRestart] = useState(false)
   const resultFocusRef = useRef<HTMLElement | null>(null)
   const resultOpen = controller.game.status !== 'playing'
   const confirmOpen = confirmRestart && !resultOpen
   const modalOpen = resultOpen || confirmOpen
+  const visibleNotice = controller.notice ?? audio.notice
+
+  function dismissVisibleNotice(): void {
+    if (controller.notice !== null) {
+      controller.dismissNotice()
+    } else {
+      audio.dismissNotice()
+    }
+  }
 
   function handlePlay(position: Position): void {
     if (resultOpen || confirmRestart) return
@@ -77,10 +92,13 @@ export function GomokuPage({ storage }: { readonly storage?: GomokuStoragePort }
       >
         <header className="game-header">
           <a className="back-link" href="#/">返回小游戏</a>
-          <h1>五子棋</h1>
+          <div className="game-title-row">
+            <h1>五子棋</h1>
+            <MusicToggle />
+          </div>
           <TurnIndicator game={controller.game} />
         </header>
-        <NoticeBanner message={controller.notice} onDismiss={controller.dismissNotice} />
+        <NoticeBanner message={visibleNotice} onDismiss={dismissVisibleNotice} />
         <GomokuBoard game={controller.game} onPlace={handlePlay} />
         <GameControls
           canUndo={controller.game.history.length > 0}

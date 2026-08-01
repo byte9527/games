@@ -332,6 +332,8 @@ test('键盘焦点清晰且可用方向键与 Enter 落子', async ({ page }, te
   expect(parseFloat(focusStyle.outlineWidth)).toBeGreaterThan(0)
 
   await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: '音乐' })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(point(page, 0, 0)).toBeFocused()
   await page.keyboard.press('ArrowRight')
   await expect(point(page, 0, 1)).toBeFocused()

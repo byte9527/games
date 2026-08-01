@@ -230,6 +230,56 @@ describe('SudokuPage', () => {
     expect(window.localStorage.getItem(ACTIVE_SUDOKU_STORAGE_KEY)).not.toBeNull()
   })
 
+  it('仅替换题库时原子切换到新会话并使用新题库保存', async () => {
+    const user = userEvent.setup()
+    const clock = new FakeClock()
+    const firstPuzzles = new FakePuzzles([
+      puzzle('easy-session-a-1', 'easy', [2]),
+    ])
+    const secondPuzzles = new FakePuzzles([
+      puzzle('easy-session-b-1', 'easy', [3, 4]),
+    ])
+    const view = render(withAudio(
+      <SudokuPage clock={clock} puzzles={firstPuzzles} />,
+    ))
+    expect(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
+      .toBeInTheDocument()
+
+    view.rerender(withAudio(
+      <SudokuPage clock={clock} puzzles={secondPuzzles} />,
+    ))
+
+    expect(screen.getByRole('button', { name: '第 1 行第 3 列，给定数字 4' }))
+      .toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '第 1 行第 4 列，空格' }))
+    await user.click(screen.getByRole('button', { name: '数字 6' }))
+    expect(screen.getByRole('button', { name: '第 1 行第 4 列，玩家数字 6' }))
+      .toBeInTheDocument()
+    expect(window.localStorage.getItem(ACTIVE_SUDOKU_STORAGE_KEY))
+      .toContain('easy-session-b-1')
+  })
+
+  it('依赖身份不变的普通 rerender 不重置当前会话', async () => {
+    const user = userEvent.setup()
+    const clock = new FakeClock()
+    const puzzles = new FakePuzzles()
+    const storage = new FakeStorage()
+    const view = render(withAudio(
+      <SudokuPage clock={clock} puzzles={puzzles} storage={storage} />,
+    ))
+    await user.click(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
+    await user.click(screen.getByRole('button', { name: '数字 4' }))
+
+    view.rerender(withAudio(
+      <SudokuPage clock={clock} puzzles={puzzles} storage={storage} />,
+    ))
+
+    expect(screen.getByRole('button', { name: '第 1 行第 3 列，玩家数字 4' }))
+      .toBeInTheDocument()
+    expect(storage.loadCalls).toBe(1)
+    expect(puzzles.nextCalls).toHaveLength(1)
+  })
+
   it('选择空格后支持候选输入，并可撤销候选变更', async () => {
     const user = userEvent.setup()
     renderPage()

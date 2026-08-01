@@ -51,6 +51,30 @@ function createStorageForPuzzles(puzzles: SudokuPuzzleProvider): SudokuStoragePo
   return new SudokuStorage(window.localStorage, puzzles)
 }
 
+const sessionIdentityIds = new WeakMap<object, number>()
+let nextSessionIdentityId = 1
+
+function sessionIdentity(value: object): number {
+  const existing = sessionIdentityIds.get(value)
+  if (existing !== undefined) return existing
+
+  const identity = nextSessionIdentityId
+  nextSessionIdentityId += 1
+  sessionIdentityIds.set(value, identity)
+  return identity
+}
+
+function sudokuSessionKey(
+  storage: SudokuStoragePort,
+  puzzles: SudokuPuzzleProvider,
+  clock: SudokuClock | undefined,
+): string {
+  const clockIdentity = clock === undefined
+    ? 'default'
+    : String(sessionIdentity(clock))
+  return `${sessionIdentity(storage)}:${sessionIdentity(puzzles)}:${clockIdentity}`
+}
+
 export function SudokuPage({
   storage,
   puzzles = builtinSudokuPuzzleProvider,
@@ -64,7 +88,28 @@ export function SudokuPage({
     () => storage ?? createStorageForPuzzles(puzzles),
     [puzzles, storage],
   )
-  const controller = useSudokuGame({ storage: resolvedStorage, puzzles, clock })
+  const sessionKey = sudokuSessionKey(resolvedStorage, puzzles, clock)
+
+  return (
+    <SudokuSession
+      clock={clock}
+      key={sessionKey}
+      puzzles={puzzles}
+      storage={resolvedStorage}
+    />
+  )
+}
+
+function SudokuSession({
+  storage,
+  puzzles,
+  clock,
+}: {
+  readonly storage: SudokuStoragePort
+  readonly puzzles: SudokuPuzzleProvider
+  readonly clock?: SudokuClock
+}) {
+  const controller = useSudokuGame({ storage, puzzles, clock })
   const audio = useAudioController()
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const confirmRestoreFocusRef = useRef<HTMLElement | null>(null)

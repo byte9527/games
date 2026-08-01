@@ -12,7 +12,7 @@ export function GameCatalogPage() {
         {gameCatalog.map((game) => (
           <li key={game.id}>
             <a className="game-card" href={`#${game.path}`}>
-              <span className="game-card__icon" aria-hidden="true">● ○</span>
+              <span className="game-card__icon" aria-hidden="true">{game.icon}</span>
               <h2>{game.title}</h2>
               <span>{game.description}</span>
             </a>

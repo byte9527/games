@@ -5,6 +5,11 @@ import { StrictMode, type ReactElement } from 'react'
 import { AudioProvider } from '../../audio/AudioProvider'
 import type { MusicEnginePort } from '../../audio/core/MusicEnginePort'
 import type { MusicPreferenceStoragePort } from '../../audio/storage/musicPreferenceStorage'
+import {
+  observeDocumentEventBoundary,
+  type DocumentEventBoundary,
+} from '../../test/documentEventBoundary'
+import { sudokuMusicScore } from './audio/sudokuMusicScore'
 import type { Difficulty, Digit, SudokuGameState } from './core/types'
 import type { SudokuPuzzle, SudokuPuzzleProvider } from './puzzles/provider'
 import {
@@ -170,6 +175,12 @@ function withAudio(ui: ReactElement): ReactElement {
   )
 }
 
+function activateAudioWithVerifiedSignal(): void {
+  documentEventBoundary.dispatchTrustedCapture('pointerdown', document.body)
+}
+
+let documentEventBoundary: DocumentEventBoundary
+
 function renderPage({
   storage = new FakeStorage(),
   puzzles = new FakePuzzles(),
@@ -188,10 +199,15 @@ describe('SudokuPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.localStorage.clear()
+    documentEventBoundary = observeDocumentEventBoundary()
     audioEngine.unlock.mockResolvedValue({ ok: true })
     audioEngine.dispose.mockResolvedValue(undefined)
     audioStorage.load.mockReturnValue({ kind: 'loaded', enabled: true })
     audioStorage.save.mockReturnValue({ ok: true })
+  })
+
+  afterEach(() => {
+    documentEventBoundary.restore()
   })
 
   it('默认组装标题、元信息、81 格棋盘、数字键盘和全部控制', () => {
@@ -475,7 +491,7 @@ describe('SudokuPage', () => {
       .not.toBeInTheDocument()
   })
 
-  it('存储不可用或保存失败时仍可继续输入，音乐开关不注册页面曲目', async () => {
+  it('存储不可用或保存失败时仍可继续输入，关闭音乐不启动曲目', async () => {
     const user = userEvent.setup()
     const unavailableStorage = new FakeStorage({ kind: 'unavailable' })
     renderPage({ storage: unavailableStorage })
@@ -491,6 +507,65 @@ describe('SudokuPage', () => {
     await user.click(musicToggle)
     expect(musicToggle).toHaveAttribute('aria-pressed', 'false')
     expect(audioEngine.play).not.toHaveBeenCalled()
+  })
+
+  it('进行中棋局解锁后播放，完成时暂停，再来一题后恢复播放', async () => {
+    const user = userEvent.setup()
+    const completionPuzzles = new FakePuzzles([
+      puzzle('easy-music-1', 'easy', [2]),
+      puzzle('easy-music-2', 'easy', [3]),
+    ])
+    renderPage({ puzzles: completionPuzzles })
+
+    activateAudioWithVerifiedSignal()
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(1))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(sudokuMusicScore)
+
+    await user.click(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
+    await user.click(screen.getByRole('button', { name: '数字 4' }))
+
+    await waitFor(() => expect(audioEngine.pause).toHaveBeenLastCalledWith(0.8))
+    expect(screen.getByRole('dialog', { name: '数独完成' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '再来一题' }))
+
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(2))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(sudokuMusicScore)
+  })
+
+  it('页面离开时注销数独音乐场景并停止引擎', async () => {
+    const view = renderPage()
+    activateAudioWithVerifiedSignal()
+    await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(sudokuMusicScore))
+    audioEngine.stop.mockClear()
+
+    view.rerender(withAudio(<div>占位内容</div>))
+
+    await waitFor(() => expect(audioEngine.stop).toHaveBeenCalledTimes(1))
+    expect(audioEngine.dispose).not.toHaveBeenCalled()
+  })
+
+  it('StrictMode 和依赖不变的重复 render 不创建重复音乐场景', async () => {
+    const storage = new FakeStorage()
+    const puzzles = new FakePuzzles()
+    const clock = new FakeClock()
+    const view = render(withAudio(
+      <StrictMode>
+        <SudokuPage clock={clock} puzzles={puzzles} storage={storage} />
+      </StrictMode>,
+    ))
+
+    activateAudioWithVerifiedSignal()
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(1))
+
+    view.rerender(withAudio(
+      <StrictMode>
+        <SudokuPage clock={clock} puzzles={puzzles} storage={storage} />
+      </StrictMode>,
+    ))
+
+    await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(1))
+    expect(audioEngine.play).toHaveBeenLastCalledWith(sudokuMusicScore)
   })
 
   it('首次保存失败时显示提示并保留内存中的输入', async () => {

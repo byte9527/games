@@ -2,7 +2,9 @@ import { useMemo, useRef, useState, type MouseEvent } from 'react'
 
 import { useAudioController } from '../../audio/AudioProvider'
 import { MusicToggle } from '../../audio/MusicToggle'
+import { useGameMusic } from '../../audio/useGameMusic'
 import { NoticeBanner } from '../gomoku/components/NoticeBanner'
+import { sudokuMusicScore } from './audio/sudokuMusicScore'
 import { CompletionDialog, formatElapsedTime } from './components/CompletionDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { DifficultySelector } from './components/DifficultySelector'
@@ -107,6 +109,7 @@ function SudokuSession({
 }) {
   const controller = useSudokuGame({ storage, puzzles, clock })
   const audio = useAudioController()
+  useGameMusic(sudokuMusicScore, controller.game.status === 'playing')
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const confirmRestoreFocusRef = useRef<HTMLElement | null>(null)
   const completionRestoreFocusRef = useRef<HTMLElement | null>(null)

@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import { AudioProvider } from '../audio/AudioProvider'
 import { gameCatalog, type GameCatalogItem } from '../games/catalog'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
+import { SudokuPage } from '../games/sudoku/SudokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
 import { InstallPrompt } from '../pwa/InstallPrompt'
 import { UpdatePrompt } from '../pwa/UpdatePrompt'
@@ -10,6 +11,7 @@ import './app.css'
 
 const gamePages: Record<GameCatalogItem['id'], ComponentType> = {
   gomoku: GomokuPage,
+  sudoku: SudokuPage,
 }
 
 function AppContent() {

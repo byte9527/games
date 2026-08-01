@@ -37,6 +37,14 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: '小游戏' })).toBeInTheDocument()
   })
 
+  it('在现有 hash 路由中显示数独页面', () => {
+    window.location.hash = '#/games/sudoku'
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: '数独', level: 1 })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '返回小游戏' })).toHaveAttribute('href', '#/')
+  })
+
   it('在现有 hash 路由外壳中提供安装和更新入口', () => {
     swMocks.needRefresh = true
     window.location.hash = '#/'

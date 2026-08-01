@@ -121,6 +121,10 @@ class FakeClock implements SudokuClock {
   private nextTimerId = 1
   private readonly callbacks = new Map<number, () => void>()
 
+  get activeTimerCount(): number {
+    return this.callbacks.size
+  }
+
   now(): number {
     return this.nowMs
   }
@@ -278,6 +282,39 @@ describe('SudokuPage', () => {
       .toBeInTheDocument()
     expect(storage.loadCalls).toBe(1)
     expect(puzzles.nextCalls).toHaveLength(1)
+  })
+
+  it('仅替换 clock 时保留不可回读的内存会话并无损迁移 timer', async () => {
+    const user = userEvent.setup()
+    const firstClock = new FakeClock()
+    const secondClock = new FakeClock()
+    const puzzles = new FakePuzzles()
+    const storage = new FakeStorage({ kind: 'unavailable' })
+    storage.saveOk = false
+    const view = render(withAudio(
+      <SudokuPage clock={firstClock} puzzles={puzzles} storage={storage} />,
+    ))
+    await user.click(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
+    await user.click(screen.getByRole('button', { name: '数字 4' }))
+    act(() => firstClock.advance(1_000))
+    await user.click(screen.getByRole('button', { name: '重新开始' }))
+
+    view.rerender(withAudio(
+      <SudokuPage clock={secondClock} puzzles={puzzles} storage={storage} />,
+    ))
+
+    expect(screen.getByRole('dialog', { name: '重新开始这道题？' }))
+      .toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      hidden: true,
+      name: '第 1 行第 3 列，玩家数字 4',
+    })).toBeInTheDocument()
+    expect(screen.getByText('用时：0:01')).toBeInTheDocument()
+    expect(screen.getByText('自动保存不可用，本局仍可继续。')).toBeInTheDocument()
+    expect(storage.loadCalls).toBe(1)
+    expect(puzzles.nextCalls).toHaveLength(1)
+    expect(firstClock.activeTimerCount).toBe(0)
+    expect(secondClock.activeTimerCount).toBe(1)
   })
 
   it('选择空格后支持候选输入，并可撤销候选变更', async () => {

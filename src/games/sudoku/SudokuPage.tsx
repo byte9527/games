@@ -67,12 +67,8 @@ function sessionIdentity(value: object): number {
 function sudokuSessionKey(
   storage: SudokuStoragePort,
   puzzles: SudokuPuzzleProvider,
-  clock: SudokuClock | undefined,
 ): string {
-  const clockIdentity = clock === undefined
-    ? 'default'
-    : String(sessionIdentity(clock))
-  return `${sessionIdentity(storage)}:${sessionIdentity(puzzles)}:${clockIdentity}`
+  return `${sessionIdentity(storage)}:${sessionIdentity(puzzles)}`
 }
 
 export function SudokuPage({
@@ -88,7 +84,7 @@ export function SudokuPage({
     () => storage ?? createStorageForPuzzles(puzzles),
     [puzzles, storage],
   )
-  const sessionKey = sudokuSessionKey(resolvedStorage, puzzles, clock)
+  const sessionKey = sudokuSessionKey(resolvedStorage, puzzles)
 
   return (
     <SudokuSession

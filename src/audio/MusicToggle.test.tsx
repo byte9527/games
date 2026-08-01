@@ -84,6 +84,7 @@ describe('MusicToggle', () => {
     await waitFor(() => {
       const button = screen.getByRole('button', { name: '音乐不可用' })
       expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('aria-pressed', 'true')
       expect(button).toHaveAccessibleDescription('当前浏览器无法播放音乐。')
     })
   })

@@ -15,7 +15,7 @@ export function MusicToggle() {
         type="button"
         className="music-toggle"
         aria-label={label}
-        aria-pressed={unavailable ? undefined : enabled}
+        aria-pressed={enabled}
         aria-describedby={unavailable ? unavailableDescriptionId : undefined}
         disabled={unavailable}
         onClick={toggle}

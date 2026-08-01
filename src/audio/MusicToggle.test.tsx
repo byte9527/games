@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AudioProvider } from './AudioProvider'
+import { AudioProvider, useAudioController } from './AudioProvider'
 import { MusicToggle } from './MusicToggle'
 import type { MusicEngineFactory, MusicEnginePort, MusicUnlockResult } from './core/MusicEnginePort'
 import type { MusicPreferenceStoragePort } from './storage/musicPreferenceStorage'
@@ -22,6 +22,15 @@ function createStorage(enabled = true): MusicPreferenceStoragePort {
   }
 }
 
+function VerifiedActivationHarness() {
+  const controller = useAudioController()
+  return (
+    <button type="button" onClick={() => controller.toggle(true)}>
+      已验证可信激活
+    </button>
+  )
+}
+
 function renderMusicToggle({
   engine,
   storage,
@@ -34,6 +43,7 @@ function renderMusicToggle({
     ...render(
       <AudioProvider engineFactory={engineFactory} storage={storage}>
         <MusicToggle />
+        <VerifiedActivationHarness />
       </AudioProvider>,
     ),
     engineFactory,
@@ -41,6 +51,22 @@ function renderMusicToggle({
 }
 
 describe('MusicToggle', () => {
+  it('程序化 element.click() 从关闭切为开启时不创建或解锁引擎', async () => {
+    const storage = createStorage(false)
+    const engine = createEngine()
+    const { engineFactory } = renderMusicToggle({ engine, storage })
+
+    await act(async () => {
+      screen.getByRole('button', { name: '音乐' }).click()
+      await Promise.resolve()
+    })
+
+    expect(storage.save).toHaveBeenCalledWith(true)
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('默认开启时点击关闭音乐并保存偏好且不创建引擎', async () => {
     const user = userEvent.setup()
     const storage = createStorage()
@@ -61,7 +87,7 @@ describe('MusicToggle', () => {
     expect(engine.play).not.toHaveBeenCalled()
   })
 
-  it('初始关闭时可用键盘开启音乐并解锁引擎', async () => {
+  it('单元测试合成的 Enter 可切换偏好但不会解锁引擎', async () => {
     const user = userEvent.setup()
     const storage = createStorage(false)
     const engine = createEngine()
@@ -74,12 +100,12 @@ describe('MusicToggle', () => {
     await user.keyboard('{Enter}')
 
     expect(storage.save).toHaveBeenCalledWith(true)
-    await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
+    expect(engine.unlock).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '音乐' })).toHaveTextContent('音乐开')
   })
 
-  it('初始关闭时可用 Space 开启音乐', async () => {
+  it('单元测试合成的 Space 可切换偏好但不会解锁引擎', async () => {
     const user = userEvent.setup()
     const storage = createStorage(false)
     const engine = createEngine()
@@ -89,16 +115,16 @@ describe('MusicToggle', () => {
     await user.keyboard(' ')
 
     expect(storage.save).toHaveBeenCalledWith(true)
-    await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
+    expect(engine.unlock).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '音乐' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '音乐' })).toHaveTextContent('音乐开')
   })
 
   it('引擎不可用后显示禁用的无障碍说明', async () => {
     const engine = createEngine({ ok: false, kind: 'unavailable' })
-    renderMusicToggle({ engine, storage: createStorage() })
+    renderMusicToggle({ engine, storage: createStorage(false) })
 
-    fireEvent.pointerDown(document)
+    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
 
     await waitFor(() => {
       const button = screen.getByRole('button', { name: '音乐' })
@@ -114,13 +140,14 @@ describe('MusicToggle', () => {
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
 
     render(
-      <AudioProvider engineFactory={engineFactory} storage={createStorage()}>
+      <AudioProvider engineFactory={engineFactory} storage={createStorage(false)}>
         <MusicToggle />
         <MusicToggle />
+        <VerifiedActivationHarness />
       </AudioProvider>,
     )
 
-    fireEvent.pointerDown(document)
+    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
 
     await waitFor(() => {
       const buttons = screen.getAllByRole('button', { name: '音乐' })
@@ -146,9 +173,9 @@ describe('MusicToggle', () => {
 
   it('解锁被阻止时仍保持可操作的开启状态', async () => {
     const engine = createEngine({ ok: false, kind: 'blocked' })
-    renderMusicToggle({ engine, storage: createStorage() })
+    renderMusicToggle({ engine, storage: createStorage(false) })
 
-    fireEvent.pointerDown(document)
+    fireEvent.click(screen.getByRole('button', { name: '已验证可信激活' }))
 
     await waitFor(() => expect(engine.unlock).toHaveBeenCalledTimes(1))
     const button = screen.getByRole('button', { name: '音乐' })

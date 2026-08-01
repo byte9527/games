@@ -8,6 +8,7 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
 
   const errors: string[] = []
   const httpRequests: string[] = []
+  const mediaRequests: string[] = []
 
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
@@ -16,6 +17,7 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
   context.on('request', (request) => {
     const url = new URL(request.url())
     if (url.protocol === 'http:' || url.protocol === 'https:') httpRequests.push(url.href)
+    if (request.resourceType() === 'media') mediaRequests.push(url.href)
   })
 
   try {
@@ -39,12 +41,15 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
     await expect(toggle).toHaveAttribute('aria-pressed', 'true')
     await expect(toggle).toHaveText('音乐开')
 
+    await board.getByRole('button', { name: '第 8 行第 8 列，空位' }).click()
+    await expect(board.getByRole('button', { name: '第 8 行第 8 列，黑棋' })).toBeVisible()
+    await expect(page.getByRole('status')).toHaveText('白方回合')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle).toHaveText('音乐开')
+
     await toggle.click()
     await expect(toggle).toHaveAttribute('aria-pressed', 'false')
     await expect(toggle).toHaveText('音乐关')
-
-    await board.getByRole('button', { name: '第 8 行第 8 列，空位' }).click()
-    await expect(board.getByRole('button', { name: '第 8 行第 8 列，黑棋' })).toBeVisible()
 
     const appOrigin = new URL(page.url()).origin
     const externalRequests = httpRequests.filter(
@@ -52,6 +57,7 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
     )
     expect(errors).toEqual([])
     expect(externalRequests).toEqual([])
+    expect(mediaRequests).toEqual([])
   } finally {
     await context.setOffline(false)
   }

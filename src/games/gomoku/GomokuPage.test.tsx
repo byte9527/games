@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { StrictMode, type ReactElement } from 'react'
 
-import { AudioProvider } from '../../audio/AudioProvider'
+import { AudioProvider, useAudioController } from '../../audio/AudioProvider'
 import type { MusicEnginePort } from '../../audio/core/MusicEnginePort'
 import type { MusicPreferenceStoragePort } from '../../audio/storage/musicPreferenceStorage'
 import { gomokuMusicScore } from './audio/gomokuMusicScore'
@@ -130,8 +130,28 @@ function withAudio(ui: ReactElement): ReactElement {
   return (
     <AudioProvider engineFactory={() => audioEngine} storage={audioPreferenceStorage}>
       {ui}
+      <VerifiedAudioActivationHarness />
     </AudioProvider>
   )
+}
+
+function VerifiedAudioActivationHarness() {
+  const controller = useAudioController()
+
+  function activate(): void {
+    if (controller.enabled) controller.toggle(false)
+    controller.toggle(true)
+  }
+
+  return (
+    <button type="button" data-testid="verified-audio-activation" onClick={activate}>
+      已验证音频激活
+    </button>
+  )
+}
+
+function activateAudioWithVerifiedSignal(): void {
+  fireEvent.click(screen.getByTestId('verified-audio-activation'))
 }
 
 function renderPage(storage: GomokuStoragePort = new FakeStorage({ kind: 'empty' })) {
@@ -181,7 +201,7 @@ describe('GomokuPage', () => {
     const user = userEvent.setup()
     renderPage(new FakeStorage({ kind: 'loaded', state: blackNearWin() }))
 
-    fireEvent.pointerDown(document)
+    activateAudioWithVerifiedSignal()
     await waitFor(() => expect(audioEngine.play).toHaveBeenCalledTimes(1))
     expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore)
 
@@ -205,7 +225,7 @@ describe('GomokuPage', () => {
   ] as const)('%s初始页面解锁后不播放并按曲目时长暂停', async (_name, game) => {
     renderPage(new FakeStorage({ kind: 'loaded', state: game }))
 
-    fireEvent.pointerDown(document)
+    activateAudioWithVerifiedSignal()
 
     await waitFor(() => expect(audioEngine.pause).toHaveBeenLastCalledWith(0.8))
     expect(audioEngine.play).not.toHaveBeenCalled()
@@ -216,7 +236,7 @@ describe('GomokuPage', () => {
     audioEngine.unlock.mockResolvedValue({ ok: false, kind: 'unavailable' })
     renderPage()
 
-    fireEvent.pointerDown(document)
+    activateAudioWithVerifiedSignal()
 
     const unavailableMessage = await screen.findByText(
       '当前浏览器无法播放音乐。',
@@ -233,7 +253,7 @@ describe('GomokuPage', () => {
     expect(screen.getByText('白方回合')).toBeInTheDocument()
   })
 
-  it('音乐偏好关闭时棋盘操作不解锁，点击音乐按钮后解锁并播放', async () => {
+  it('音乐偏好关闭时棋盘操作不解锁，已验证开启信号到达后解锁并播放', async () => {
     const user = userEvent.setup()
     audioPreferenceStorage.load.mockReturnValue({ kind: 'loaded', enabled: false })
     renderPage()
@@ -245,7 +265,7 @@ describe('GomokuPage', () => {
     await user.click(screen.getByRole('button', { name: '第 8 行第 8 列，空位' }))
     expect(audioEngine.unlock).not.toHaveBeenCalled()
 
-    await user.click(musicToggle)
+    activateAudioWithVerifiedSignal()
 
     await waitFor(() => expect(audioEngine.unlock).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore))
@@ -255,7 +275,7 @@ describe('GomokuPage', () => {
 
   it('页面离开时注销当前音乐场景并停止引擎', async () => {
     const view = render(withAudio(<GomokuPage />))
-    fireEvent.pointerDown(document)
+    activateAudioWithVerifiedSignal()
     await waitFor(() => expect(audioEngine.play).toHaveBeenLastCalledWith(gomokuMusicScore))
     audioEngine.stop.mockClear()
 

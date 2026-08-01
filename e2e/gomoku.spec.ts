@@ -1,5 +1,47 @@
 import { expect, test, type Page } from '@playwright/test'
 
+interface AudioLifecycle {
+  readonly constructions: number
+  readonly resumes: number
+}
+
+async function instrumentAudioLifecycle(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const lifecycle = { constructions: 0, resumes: 0 }
+    Object.defineProperty(window, '__audioLifecycle', { value: lifecycle })
+
+    const NativeAudioContext = window.AudioContext
+    if (NativeAudioContext === undefined) return
+
+    const InstrumentedAudioContext = new Proxy(NativeAudioContext, {
+      construct(target, argumentsList, newTarget) {
+        const context = Reflect.construct(target, argumentsList, newTarget) as AudioContext
+        lifecycle.constructions += 1
+        const resume = context.resume.bind(context)
+        Object.defineProperty(context, 'resume', {
+          configurable: true,
+          value: () => {
+            lifecycle.resumes += 1
+            return resume()
+          },
+        })
+        return context
+      },
+    })
+    Object.defineProperty(window, 'AudioContext', {
+      configurable: true,
+      writable: true,
+      value: InstrumentedAudioContext,
+    })
+  })
+}
+
+async function readAudioLifecycle(page: Page): Promise<AudioLifecycle> {
+  return page.evaluate(() => (
+    window as typeof window & { readonly __audioLifecycle: AudioLifecycle }
+  ).__audioLifecycle)
+}
+
 function intersection(page: Page, row: number, col: number, state: '空位' | '黑棋' | '白棋') {
   return page.getByRole('button', { name: `第 ${row} 行第 ${col} 列，${state}` })
 }
@@ -72,7 +114,7 @@ test('重新开始取消时保留棋局，确认后清空棋盘', async ({ page 
   await expect(page.getByRole('status')).toHaveText('黑方回合')
 })
 
-test('音乐开关跨刷新保存并可重新开启', async ({ context, page }) => {
+test('音乐开关跨刷新保存，且仅真实鼠标、触控或键盘激活音频', async ({ context, page }, testInfo) => {
   const errors: string[] = []
   const httpRequests: string[] = []
 
@@ -85,6 +127,7 @@ test('音乐开关跨刷新保存并可重新开启', async ({ context, page }) 
     if (url.protocol === 'http:' || url.protocol === 'https:') httpRequests.push(url.href)
   })
 
+  await instrumentAudioLifecycle(page)
   await page.goto('/#/games/gomoku')
 
   const toggle = page.getByRole('button', { name: '音乐' })
@@ -92,6 +135,11 @@ test('音乐开关跨刷新保存并可重新开启', async ({ context, page }) 
   await expect(toggle).toBeEnabled()
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   await expect(toggle).toHaveText('音乐开')
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    document.dispatchEvent(new Event('keydown', { bubbles: true }))
+  })
+  expect(await readAudioLifecycle(page)).toEqual({ constructions: 0, resumes: 0 })
 
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
@@ -103,9 +151,28 @@ test('音乐开关跨刷新保存并可重新开启', async ({ context, page }) 
   await expect(reloadedToggle).toHaveAttribute('aria-pressed', 'false')
   await expect(reloadedToggle).toHaveText('音乐关')
 
-  await reloadedToggle.click()
+  await reloadedToggle.evaluate((button) => {
+    if (!(button instanceof HTMLButtonElement)) throw new Error('音乐开关应当是 button')
+    button.click()
+  })
   await expect(reloadedToggle).toHaveAttribute('aria-pressed', 'true')
   await expect(reloadedToggle).toHaveText('音乐开')
+  expect(await readAudioLifecycle(page)).toEqual({ constructions: 0, resumes: 0 })
+
+  if (testInfo.project.name.startsWith('mobile-')) {
+    await reloadedToggle.tap()
+    await reloadedToggle.tap()
+  } else {
+    await reloadedToggle.click()
+    await reloadedToggle.click()
+  }
+  await expect.poll(() => readAudioLifecycle(page)).toEqual({ constructions: 1, resumes: 1 })
+
+  if (testInfo.project.name.startsWith('mobile-')) await reloadedToggle.tap()
+  else await reloadedToggle.click()
+  await reloadedToggle.focus()
+  await page.keyboard.press('Enter')
+  await expect.poll(() => readAudioLifecycle(page)).toEqual({ constructions: 1, resumes: 2 })
 
   await page.getByRole('link', { name: '返回小游戏' }).click()
   await expect(page.getByRole('heading', { name: '小游戏' })).toBeVisible()

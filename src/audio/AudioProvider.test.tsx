@@ -1,5 +1,5 @@
 import { Component, StrictMode, type ReactNode } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { MusicEngineFactory, MusicEnginePort, MusicUnlockResult } from './core/MusicEnginePort'
 import type { MusicScore } from './core/musicScore'
 import type { MusicPreferenceStoragePort } from './storage/musicPreferenceStorage'
@@ -65,16 +65,24 @@ function createStorage(
 }
 
 function ControllerHarness({ gameScore = score, active = true }: { gameScore?: MusicScore; active?: boolean }) {
-  const controller = useAudioController()
   useGameMusic(gameScore, active)
+
+  return <AudioActivationHarness />
+}
+
+function AudioActivationHarness() {
+  const controller = useAudioController()
 
   return (
     <div>
       <output data-testid="enabled">{String(controller.enabled)}</output>
       <output data-testid="availability">{controller.availability}</output>
       <output data-testid="notice">{controller.notice ?? ''}</output>
-      <button type="button" onClick={controller.toggle}>
+      <button type="button" onClick={() => controller.toggle(false)}>
         toggle
+      </button>
+      <button type="button" onClick={() => controller.toggle(true)}>
+        trusted toggle
       </button>
       <button type="button" onClick={controller.dismissNotice}>
         dismiss
@@ -188,6 +196,16 @@ async function flushPromiseChain(): Promise<void> {
   await Promise.resolve()
 }
 
+async function activateAudioWithVerifiedSignal(): Promise<void> {
+  await act(async () => {
+    if (screen.getByTestId('enabled').textContent === 'true') {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    await flushPromiseChain()
+  })
+}
+
 beforeEach(() => {
   window.localStorage.clear()
 })
@@ -202,7 +220,29 @@ afterEach(() => {
 })
 
 describe('AudioProvider', () => {
-  it('首次可信事件前不创建或解锁引擎，事件后解锁并播放', async () => {
+  it('合成的全局 pointerdown 和 keydown 不创建或解锁引擎', async () => {
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+
+    render(
+      <AudioProvider engineFactory={engineFactory} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await act(async () => {
+      document.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      document.dispatchEvent(new Event('keydown', { bubbles: true }))
+      await flushPromiseChain()
+    })
+
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
+    expect(engine.play).not.toHaveBeenCalled()
+    expect(screen.getByTestId('availability')).toHaveTextContent('locked')
+  })
+
+  it('首次已验证可信信号前不创建或解锁引擎，信号到达后解锁并播放', async () => {
     const engine = createEngine()
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
 
@@ -217,9 +257,7 @@ describe('AudioProvider', () => {
     expect(engine.play).not.toHaveBeenCalled()
     expect(screen.getByTestId('availability')).toHaveTextContent('locked')
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     expect(engineFactory).toHaveBeenCalledTimes(1)
     expect(engine.unlock).toHaveBeenCalledTimes(1)
@@ -227,7 +265,7 @@ describe('AudioProvider', () => {
     expect(screen.getByTestId('availability')).toHaveTextContent('ready')
   })
 
-  it('音乐开关的可信事件不触发全局解锁，普通目标仍可解锁', async () => {
+  it('音乐开关和普通目标上的合成事件均不触发全局解锁', async () => {
     const engine = createEngine()
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
 
@@ -251,13 +289,15 @@ describe('AudioProvider', () => {
 
     await act(async () => {
       fireEvent.pointerDown(document.body)
+      fireEvent.keyDown(document.body)
+      await flushPromiseChain()
     })
 
-    expect(engineFactory).toHaveBeenCalledTimes(1)
-    expect(engine.unlock).toHaveBeenCalledTimes(1)
+    expect(engineFactory).not.toHaveBeenCalled()
+    expect(engine.unlock).not.toHaveBeenCalled()
   })
 
-  it('StrictMode 下同时到达的可信事件共享一次创建和解锁', async () => {
+  it('StrictMode 下同时到达的已验证可信信号共享一次创建和解锁', async () => {
     const deferred = createDeferred<MusicUnlockResult>()
     const engine = createEngine()
     vi.mocked(engine.unlock).mockReturnValue(deferred.promise)
@@ -280,8 +320,11 @@ describe('AudioProvider', () => {
       countActiveCaptureListeners('keydown', addEventListener.mock.calls, removeEventListener.mock.calls),
     ).toBe(1)
 
-    fireEvent.pointerDown(document)
-    fireEvent.keyDown(document)
+    await activateAudioWithVerifiedSignal()
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    })
 
     expect(engineFactory).toHaveBeenCalledTimes(1)
     expect(engine.unlock).toHaveBeenCalledTimes(1)
@@ -327,16 +370,16 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     expect(screen.getByTestId('availability')).toHaveTextContent('locked')
     expect(screen.getByTestId('notice')).toBeEmptyDOMElement()
     expect(engine.play).not.toHaveBeenCalled()
 
     await act(async () => {
-      fireEvent.keyDown(document)
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      await flushPromiseChain()
     })
 
     expect(engine.unlock).toHaveBeenCalledTimes(2)
@@ -344,7 +387,7 @@ describe('AudioProvider', () => {
     expect(engine.play).toHaveBeenCalledWith(score)
   })
 
-  it('并发可信事件共享一次失败解锁，并只让错误边界捕获一次未知错误', async () => {
+  it('并发已验证可信信号共享一次失败解锁，并只让错误边界捕获一次未知错误', async () => {
     const rejection = { reason: 'unlock failed' }
     const deferred = createDeferred<MusicUnlockResult>()
     const engine = createEngine()
@@ -362,8 +405,11 @@ describe('AudioProvider', () => {
       { onCaughtError: reactCaughtErrors },
     )
 
-    fireEvent.pointerDown(document)
-    fireEvent.keyDown(document)
+    await activateAudioWithVerifiedSignal()
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    })
     expect(engine.unlock).toHaveBeenCalledTimes(1)
 
     vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
@@ -398,16 +444,14 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     expect(screen.getByTestId('enabled')).toHaveTextContent('true')
     expect(screen.getByTestId('availability')).toHaveTextContent('unavailable')
     expect(screen.getByTestId('notice')).toHaveTextContent(notice)
   })
 
-  it('初始关闭时普通可信事件不解锁，点击开启后保存、解锁并播放', async () => {
+  it('初始关闭时普通合成事件不解锁，已验证开启信号会保存、解锁并播放', async () => {
     const engine = createEngine()
     const storage = createStorage({ kind: 'loaded', enabled: false })
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
@@ -422,7 +466,8 @@ describe('AudioProvider', () => {
     expect(engineFactory).not.toHaveBeenCalled()
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      await flushPromiseChain()
     })
 
     expect(storage.save).toHaveBeenCalledWith(true)
@@ -441,9 +486,7 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
     fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
 
     expect(storage.save).toHaveBeenCalledWith(false)
@@ -497,14 +540,16 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     act(() => setVisibilityState('hidden'))
     expect(engine.pause).toHaveBeenLastCalledWith(score.fadeSeconds)
 
-    act(() => setVisibilityState('visible'))
+    await act(async () => {
+      setVisibilityState('visible')
+      await flushPromiseChain()
+    })
+    expect(engine.unlock).toHaveBeenCalledTimes(2)
     expect(engine.play).toHaveBeenLastCalledWith(score)
 
     view.rerender(
@@ -522,21 +567,162 @@ describe('AudioProvider', () => {
     expect(engine.stop).toHaveBeenCalled()
   })
 
+  it('页面从隐藏恢复可见时先恢复已有引擎，并发开启共享恢复且完成后才播放', async () => {
+    const resume = createDeferred<MusicUnlockResult>()
+    const engine = createEngine()
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockReturnValueOnce(resume.promise)
+
+    render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    expect(engine.play).toHaveBeenCalledTimes(1)
+
+    act(() => setVisibilityState('hidden'))
+    vi.mocked(engine.play).mockClear()
+
+    act(() => setVisibilityState('visible'))
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    })
+
+    expect(engine.unlock).toHaveBeenCalledTimes(2)
+    expect(engine.play).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resume.resolve({ ok: true })
+      await resume.promise
+    })
+
+    expect(engine.play).toHaveBeenCalledWith(score)
+  })
+
+  it('关闭后只有已验证可信开启信号会恢复已有引擎，完成前不播放', async () => {
+    const resume = createDeferred<MusicUnlockResult>()
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockReturnValueOnce(resume.promise)
+
+    render(
+      <AudioProvider engineFactory={engineFactory} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    vi.mocked(engine.play).mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+    expect(engine.play).not.toHaveBeenCalled()
+    expect(screen.getByTestId('availability')).toHaveTextContent('locked')
+
+    fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+
+    expect(engineFactory).toHaveBeenCalledTimes(1)
+    expect(engine.unlock).toHaveBeenCalledTimes(2)
+    expect(engine.play).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resume.resolve({ ok: true })
+      await resume.promise
+    })
+
+    expect(screen.getByTestId('availability')).toHaveTextContent('ready')
+    expect(engine.play).toHaveBeenCalledWith(score)
+  })
+
+  it('页面恢复被浏览器阻止时回到 locked，后续已验证开启信号可重试', async () => {
+    const engine = createEngine()
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, kind: 'blocked' })
+      .mockResolvedValueOnce({ ok: true })
+
+    render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    act(() => setVisibilityState('hidden'))
+    vi.mocked(engine.play).mockClear()
+
+    await act(async () => {
+      setVisibilityState('visible')
+      await flushPromiseChain()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('availability')).toHaveTextContent('locked')
+    })
+    expect(engine.play).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+      await flushPromiseChain()
+    })
+
+    expect(engine.unlock).toHaveBeenCalledTimes(3)
+    expect(screen.getByTestId('availability')).toHaveTextContent('ready')
+    expect(engine.play).toHaveBeenCalledWith(score)
+  })
+
+  it('页面恢复报告不可用时进入 unavailable 并显示明确提示', async () => {
+    const engine = createEngine()
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, kind: 'unavailable' })
+
+    render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    act(() => setVisibilityState('hidden'))
+    vi.mocked(engine.play).mockClear()
+
+    await act(async () => {
+      setVisibilityState('visible')
+      await flushPromiseChain()
+    })
+
+    expect(screen.getByTestId('availability')).toHaveTextContent('unavailable')
+    expect(screen.getByTestId('notice')).toHaveTextContent('当前浏览器无法播放音乐。')
+    expect(engine.play).not.toHaveBeenCalled()
+  })
+
   it('切换曲目时播放新曲目，旧注册 cleanup 不会清除后来注册的同 id 场景', async () => {
     const engine = createEngine()
     const newerScore: MusicScore = { ...score, bpm: 90 }
     const view = render(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration gameScore={score} active />
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     view.rerender(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="old" gameScore={score} active />
         <SceneRegistration key="new" gameScore={newerScore} active />
       </AudioProvider>,
@@ -546,6 +732,7 @@ describe('AudioProvider', () => {
     const stopCount = vi.mocked(engine.stop).mock.calls.length
     view.rerender(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="new" gameScore={newerScore} active />
       </AudioProvider>,
     )
@@ -560,18 +747,18 @@ describe('AudioProvider', () => {
     const latestScore: MusicScore = { ...score, id: 'latest-theme', bpm: 140 }
     const view = render(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="previous" gameScore={previousScore} active />
         <SceneRegistration key="latest" gameScore={latestScore} active />
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
     expect(engine.play).toHaveBeenLastCalledWith(latestScore)
 
     view.rerender(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="previous" gameScore={previousScore} active />
       </AudioProvider>,
     )
@@ -585,18 +772,18 @@ describe('AudioProvider', () => {
     const invalidScore: MusicScore = { ...score, id: 'invalid-theme', bpm: 0 }
     const view = render(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="valid" gameScore={validScore} active />
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
     expect(engine.play).toHaveBeenLastCalledWith(validScore)
     const playCountBeforeInvalidRegistration = vi.mocked(engine.play).mock.calls.length
 
     view.rerender(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="valid" gameScore={validScore} active />
         <SceneRegistration key="invalid" gameScore={invalidScore} active />
       </AudioProvider>,
@@ -608,6 +795,7 @@ describe('AudioProvider', () => {
 
     view.rerender(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
         <SceneRegistration key="valid" gameScore={validScore} active />
       </AudioProvider>,
     )
@@ -626,9 +814,7 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
 
     expect(screen.getByTestId('notice')).toHaveTextContent('曲目配置无效：速度必须大于 0')
     expect(engine.stop).toHaveBeenCalled()
@@ -663,7 +849,7 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    fireEvent.pointerDown(document)
+    await activateAudioWithVerifiedSignal()
     view.unmount()
 
     expect(engine.stop).toHaveBeenCalledTimes(1)
@@ -691,8 +877,11 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    fireEvent.pointerDown(document)
-    fireEvent.keyDown(document)
+    await activateAudioWithVerifiedSignal()
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'toggle' }))
+      fireEvent.click(screen.getByRole('button', { name: 'trusted toggle' }))
+    })
     expect(engine.unlock).toHaveBeenCalledTimes(1)
     view.unmount()
     vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
@@ -724,9 +913,7 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
     vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
       queuedCallbacks.push(callback)
     })
@@ -755,9 +942,7 @@ describe('AudioProvider', () => {
       </AudioProvider>,
     )
 
-    await act(async () => {
-      fireEvent.pointerDown(document)
-    })
+    await activateAudioWithVerifiedSignal()
     vi.spyOn(globalThis, 'queueMicrotask').mockImplementation((callback) => {
       queuedCallbacks.push(callback)
     })

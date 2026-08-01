@@ -21,7 +21,7 @@ export interface AudioController {
   readonly enabled: boolean
   readonly availability: 'locked' | 'ready' | 'unavailable'
   readonly notice: string | null
-  toggle(): void
+  toggle(hasTrustedUserActivation: boolean): void
   dismissNotice(): void
   setGameMusic(score: MusicScore, active: boolean): () => void
 }
@@ -152,8 +152,8 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     setAvailability(nextAvailability)
   }, [])
 
-  const ensureUnlocked = useCallback((): Promise<void> => {
-    if (availabilityRef.current !== 'locked') return Promise.resolve()
+  const ensureEngineReady = useCallback((allowEngineCreation: boolean): Promise<void> => {
+    if (availabilityRef.current === 'unavailable') return Promise.resolve()
 
     const pendingUnlock = unlockPromiseRef.current
     if (pendingUnlock !== null) return pendingUnlock
@@ -161,6 +161,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     const unlockAttempt = (async () => {
       let engine = engineRef.current
       if (engine === null) {
+        if (!allowEngineCreation) return
         engine = engineFactoryRef.current()
         if (engine === null) {
           if (!disposedRef.current) {
@@ -180,6 +181,8 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       } else if (result.kind === 'unavailable') {
         updateAvailability('unavailable')
         setNotice('当前浏览器无法播放音乐。')
+      } else {
+        updateAvailability('locked')
       }
     })()
     const trackedUnlock = unlockAttempt.catch((error: unknown) => {
@@ -196,19 +199,23 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return trackedUnlock
   }, [updateAvailability])
 
-  const toggle = useCallback(() => {
+  const toggle = useCallback((hasTrustedUserActivation: boolean) => {
     const nextEnabled = !enabledRef.current
     enabledRef.current = nextEnabled
+
+    if (nextEnabled && availabilityRef.current === 'ready') {
+      updateAvailability('locked')
+    }
     setEnabled(nextEnabled)
 
     if (!storageAdapter.save(nextEnabled).ok) {
       setNotice('无法保存音乐设置，刷新后可能恢复默认值。')
     }
 
-    if (nextEnabled) {
-      void ensureUnlocked()
+    if (nextEnabled && hasTrustedUserActivation) {
+      void ensureEngineReady(true)
     }
-  }, [ensureUnlocked, storageAdapter])
+  }, [ensureEngineReady, storageAdapter, updateAvailability])
 
   const dismissNotice = useCallback(() => {
     setNotice(null)
@@ -265,13 +272,14 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     if (!enabled || availability !== 'locked') return
 
     const requestUnlock = (event: Event) => {
+      if (!event.isTrusted) return
       if (
         event.target instanceof Element &&
         event.target.closest('[data-audio-toggle="true"]') !== null
       ) {
         return
       }
-      void ensureUnlocked()
+      void ensureEngineReady(true)
     }
     document.addEventListener('pointerdown', requestUnlock, true)
     document.addEventListener('keydown', requestUnlock, true)
@@ -280,15 +288,29 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       document.removeEventListener('pointerdown', requestUnlock, true)
       document.removeEventListener('keydown', requestUnlock, true)
     }
-  }, [availability, enabled, ensureUnlocked])
+  }, [availability, enabled, ensureEngineReady])
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      setPageVisible(document.visibilityState !== 'hidden')
+      if (document.visibilityState === 'hidden') {
+        setPageVisible(false)
+        return
+      }
+
+      if (!enabledRef.current || engineRef.current === null) {
+        setPageVisible(true)
+        return
+      }
+
+      void ensureEngineReady(false).then(() => {
+        if (!disposedRef.current && document.visibilityState !== 'hidden') {
+          setPageVisible(true)
+        }
+      })
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [])
+  }, [ensureEngineReady])
 
   useEffect(() => {
     const engine = engineRef.current

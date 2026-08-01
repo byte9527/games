@@ -485,6 +485,36 @@ describe('SudokuPage', () => {
     expect(cell).toHaveAccessibleName('第 1 行第 3 列，玩家数字 4')
   })
 
+  it.each([
+    ['重新开始', '取消'],
+    ['重新开始', '确认重新开始'],
+    ['换一题', '取消'],
+    ['换一题', '确认换题'],
+    ['中等', '取消'],
+    ['中等', '确认切换难度'],
+  ] as const)(
+    '即使 %s 不是 activeElement，%s 后仍恢复真实触发按钮',
+    async (triggerName, closeName) => {
+      const user = userEvent.setup()
+      renderPage()
+      await user.click(screen.getByRole('button', { name: '第 1 行第 3 列，空格' }))
+      await user.click(screen.getByRole('button', { name: '数字 4' }))
+      const trigger = screen.getByRole('button', { name: triggerName })
+      const distractor = screen.getByRole('link', { name: '返回小游戏' })
+      distractor.focus()
+      expect(distractor).toHaveFocus()
+
+      fireEvent.click(trigger)
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
+
+      fireEvent.click(screen.getByRole('button', { name: closeName }))
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      await waitFor(() => expect(trigger).toHaveFocus())
+    },
+  )
+
   it('StrictMode 不重复初始化或创建重复确认弹窗', async () => {
     const user = userEvent.setup()
     const storage = new FakeStorage()
@@ -533,5 +563,16 @@ describe('sudoku.css', () => {
     expect(css).toMatch(/\.sudoku-cell\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/s)
     expect(css).toMatch(/\.number-pad\s+button[^}]*min-height:\s*44px/s)
     expect(css).toMatch(/touch-action:\s*manipulation/)
+  })
+
+  it('强制配色为候选和冲突玩家数字使用匹配的系统色', () => {
+    const forcedColors = css.slice(css.indexOf('@media (forced-colors: active)'))
+
+    expect(forcedColors).toMatch(
+      /\.sudoku-cell__candidates\s*\{[^}]*color:\s*CanvasText/s,
+    )
+    expect(forcedColors).toMatch(
+      /\[data-conflict="true"\]\s+\.sudoku-cell__value--player\s*\{[^}]*color:\s*HighlightText/s,
+    )
   })
 })

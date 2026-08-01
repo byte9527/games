@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type MouseEvent } from 'react'
 
 import { useAudioController } from '../../audio/AudioProvider'
 import { MusicToggle } from '../../audio/MusicToggle'
@@ -69,6 +69,7 @@ export function SudokuPage({
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const confirmRestoreFocusRef = useRef<HTMLElement | null>(null)
   const completionRestoreFocusRef = useRef<HTMLElement | null>(null)
+  const difficultyTriggerRef = useRef<HTMLButtonElement | null>(null)
   const completionOpen = controller.game.status === 'completed'
   const confirmOpen = pendingAction !== null && !completionOpen
   const modalOpen = completionOpen || confirmOpen
@@ -85,10 +86,23 @@ export function SudokuPage({
       : null
   }
 
-  function requestConfirmation(action: PendingAction): void {
+  function requestConfirmation(
+    action: PendingAction,
+    trigger: HTMLButtonElement,
+  ): void {
     if (modalOpen || pendingAction !== null) return
-    captureActiveElement(confirmRestoreFocusRef)
+    confirmRestoreFocusRef.current = trigger
     setPendingAction(action)
+  }
+
+  function requireRequestTrigger(
+    event: MouseEvent<HTMLButtonElement> | undefined,
+    actionName: string,
+  ): HTMLButtonElement {
+    if (event === undefined) {
+      throw new Error(`${actionName}请求必须由按钮点击事件触发`)
+    }
+    return event.currentTarget
   }
 
   function handleSelect(index: number): void {
@@ -122,21 +136,48 @@ export function SudokuPage({
     controller.undo()
   }
 
-  function handleRestartRequest(): void {
+  function handleRestartRequest(event?: MouseEvent<HTMLButtonElement>): void {
     if (modalOpen) return
-    if (controller.hasProgress) requestConfirmation({ kind: 'restart' })
+    if (controller.hasProgress) {
+      requestConfirmation(
+        { kind: 'restart' },
+        requireRequestTrigger(event, '重新开始'),
+      )
+    }
     else controller.restart()
   }
 
-  function handleNewPuzzleRequest(): void {
+  function handleNewPuzzleRequest(event?: MouseEvent<HTMLButtonElement>): void {
     if (modalOpen) return
-    if (controller.hasProgress) requestConfirmation({ kind: 'new-puzzle' })
+    if (controller.hasProgress) {
+      requestConfirmation(
+        { kind: 'new-puzzle' },
+        requireRequestTrigger(event, '换题'),
+      )
+    }
     else controller.newPuzzle(controller.game.difficulty)
+  }
+
+  function captureDifficultyTrigger(event: MouseEvent<HTMLDivElement>): void {
+    if (modalOpen || !(event.target instanceof Element)) return
+    const trigger = event.target.closest('button')
+    if (
+      trigger instanceof HTMLButtonElement &&
+      event.currentTarget.contains(trigger)
+    ) {
+      difficultyTriggerRef.current = trigger
+    }
   }
 
   function handleDifficultyRequest(target: Difficulty): void {
     if (modalOpen || target === controller.game.difficulty) return
-    if (controller.hasProgress) requestConfirmation({ kind: 'difficulty', target })
+    if (controller.hasProgress) {
+      const trigger = difficultyTriggerRef.current
+      if (trigger === null || !trigger.isConnected) {
+        throw new Error('切换难度请求必须由难度按钮点击事件触发')
+      }
+      requestConfirmation({ kind: 'difficulty', target }, trigger)
+    }
     else controller.newPuzzle(target)
   }
 
@@ -208,10 +249,12 @@ export function SudokuPage({
               onRestart={handleRestartRequest}
               onUndo={handleUndo}
             />
-            <DifficultySelector
-              difficulty={controller.game.difficulty}
-              onSelect={handleDifficultyRequest}
-            />
+            <div onClickCapture={captureDifficultyTrigger}>
+              <DifficultySelector
+                difficulty={controller.game.difficulty}
+                onSelect={handleDifficultyRequest}
+              />
+            </div>
           </div>
         </div>
       </div>

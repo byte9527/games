@@ -386,8 +386,16 @@
     box-shadow: inset 0 0 0 3px CanvasText;
   }
 
+  .sudoku-page .sudoku-cell__candidates {
+    color: CanvasText;
+  }
+
   .sudoku-page .sudoku-cell__value--player {
     color: LinkText;
+  }
+
+  .sudoku-page .sudoku-cell[data-conflict="true"] .sudoku-cell__value--player {
+    color: HighlightText;
   }
 }
 

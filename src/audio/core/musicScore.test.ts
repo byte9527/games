@@ -39,6 +39,13 @@ describe('music score', () => {
   })
 
   it.each([
+    ['spaces', '   '],
+    ['tab and newline', '\t\n'],
+  ])('rejects an id containing only $0', (_name, id) => {
+    expect(validateMusicScore(createScore({ id }))).toEqual({ ok: false, message: '曲目标识不能为空' })
+  })
+
+  it.each([
     ['empty id', createScore({ id: '' }), '曲目标识不能为空'],
     ['non-positive bpm', createScore({ bpm: 0 }), '速度必须大于 0'],
     ['non-positive beats per loop', createScore({ beatsPerLoop: 0 }), '循环拍数必须大于 0'],
@@ -141,6 +148,36 @@ describe('music score', () => {
     })
 
     expect(validateMusicScore(score)).toEqual({ ok: true })
+  })
+
+  it('accepts a decimal note that ends at the loop boundary after floating-point rounding', () => {
+    const score = createScore({
+      beatsPerLoop: 0.3,
+      notes: [{ beat: 0.1, durationBeats: 0.2, midi: 60, velocity: 0.5, instrument: 'pluck' }],
+    })
+
+    expect(validateMusicScore(score)).toEqual({ ok: true })
+  })
+
+  it('rejects a decimal note that truly exceeds the loop boundary', () => {
+    const score = createScore({
+      beatsPerLoop: 0.3,
+      notes: [{ beat: 0.1, durationBeats: 0.2000000001, midi: 60, velocity: 0.5, instrument: 'pluck' }],
+    })
+
+    expect(validateMusicScore(score)).toEqual({ ok: false, message: '音符不能越过循环末尾' })
+  })
+
+  it.each([
+    ['a minimum positive bpm', createScore({ bpm: Number.MIN_VALUE }), '速度必须大于 0'],
+    [
+      'a loop duration that overflows',
+      createScore({ bpm: 1, beatsPerLoop: Number.MAX_VALUE }),
+      '循环拍数必须大于 0',
+    ],
+  ])('rejects $0 when derived timing is not finite', (_name, score, message) => {
+    expect(loopDurationSeconds(score)).toBe(Infinity)
+    expect(validateMusicScore(score)).toEqual({ ok: false, message })
   })
 
   it('checks non-positive duration before considering the note end', () => {

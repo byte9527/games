@@ -10,6 +10,7 @@ const score: MusicScore = {
   notes: [
     { beat: 3, durationBeats: 2, midi: 66, velocity: 0.4, instrument: 'flute' },
     { beat: 0, durationBeats: 1, midi: 62, velocity: 0.5, instrument: 'pluck' },
+    { beat: 3, durationBeats: 1, midi: 55, velocity: 0.3, instrument: 'drone' },
   ],
 }
 
@@ -19,8 +20,8 @@ describe('music scheduler', () => {
 
     const schedule = buildLoopSchedule(score, 10)
 
-    expect(schedule).toHaveLength(2)
-    expect(schedule.map((note) => note.startTime)).toEqual([10, 13])
+    expect(schedule).toHaveLength(3)
+    expect(schedule.map((note) => note.startTime)).toEqual([10, 13, 13])
     expect(schedule[0]).toMatchObject({
       startTime: 10,
       durationSeconds: 1,
@@ -35,6 +36,7 @@ describe('music scheduler', () => {
       instrument: 'flute',
     })
     expect(schedule[1]?.frequency).toBeCloseTo(369.9944, 4)
+    expect(schedule.slice(1).map((note) => note.instrument)).toEqual(['flute', 'drone'])
     expect(score.notes).toEqual(originalNotes)
   })
 })

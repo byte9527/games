@@ -17,14 +17,24 @@ export interface MusicScore {
   readonly notes: readonly MusicNote[]
 }
 
-export type MusicScoreValidation = { ok: true } | { ok: false; message: string }
+export type MusicScoreValidation =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly message: string }
 
 export function validateMusicScore(score: MusicScore): MusicScoreValidation {
-  if (score.id.length === 0) return { ok: false, message: '曲目标识不能为空' }
+  if (score.id.trim() === '') return { ok: false, message: '曲目标识不能为空' }
   if (!Number.isFinite(score.bpm) || score.bpm <= 0) {
     return { ok: false, message: '速度必须大于 0' }
   }
+  const secondsPerBeat = 60 / score.bpm
+  if (!Number.isFinite(secondsPerBeat) || secondsPerBeat <= 0) {
+    return { ok: false, message: '速度必须大于 0' }
+  }
   if (!Number.isFinite(score.beatsPerLoop) || score.beatsPerLoop <= 0) {
+    return { ok: false, message: '循环拍数必须大于 0' }
+  }
+  const durationSeconds = loopDurationSeconds(score)
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     return { ok: false, message: '循环拍数必须大于 0' }
   }
   if (!Number.isFinite(score.masterGain) || score.masterGain < 0 || score.masterGain > 1) {
@@ -41,7 +51,10 @@ export function validateMusicScore(score: MusicScore): MusicScoreValidation {
     if (!Number.isFinite(note.durationBeats) || note.durationBeats <= 0) {
       return { ok: false, message: '音符时值必须大于 0' }
     }
-    if (note.beat + note.durationBeats > score.beatsPerLoop) {
+    const noteEndBeat = note.beat + note.durationBeats
+    const boundaryTolerance =
+      Number.EPSILON * Math.max(Math.abs(note.beat), Math.abs(note.durationBeats), Math.abs(score.beatsPerLoop))
+    if (noteEndBeat - score.beatsPerLoop > boundaryTolerance) {
       return { ok: false, message: '音符不能越过循环末尾' }
     }
     if (!Number.isFinite(note.velocity) || note.velocity < 0 || note.velocity > 1) {

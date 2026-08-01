@@ -71,3 +71,44 @@ test('重新开始取消时保留棋局，确认后清空棋盘', async ({ page 
   await expect(occupiedIntersections(page)).toHaveCount(0)
   await expect(page.getByRole('status')).toHaveText('黑方回合')
 })
+
+test('音乐开关跨刷新保存并可重新开启', async ({ page }) => {
+  const errors: string[] = []
+  const mediaRequests: string[] = []
+
+  page.on('pageerror', (error) => errors.push(error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text())
+  })
+  page.on('request', (request) => {
+    if (request.resourceType() === 'media') mediaRequests.push(request.url())
+  })
+
+  await page.goto('/#/games/gomoku')
+
+  const toggle = page.getByRole('button', { name: '音乐' })
+  await expect(toggle).toBeVisible()
+  await expect(toggle).toBeEnabled()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(toggle).toHaveText('音乐开')
+
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(toggle).toHaveText('音乐关')
+
+  await page.reload()
+
+  const reloadedToggle = page.getByRole('button', { name: '音乐' })
+  await expect(reloadedToggle).toHaveAttribute('aria-pressed', 'false')
+  await expect(reloadedToggle).toHaveText('音乐关')
+
+  await reloadedToggle.click()
+  await expect(reloadedToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(reloadedToggle).toHaveText('音乐开')
+
+  await page.getByRole('link', { name: '返回小游戏' }).click()
+  await expect(page.getByRole('heading', { name: '小游戏' })).toBeVisible()
+
+  expect(errors).toEqual([])
+  expect(mediaRequests).toEqual([])
+})

@@ -97,6 +97,29 @@ function readClockNow(clock: SudokuClock): number {
   return now
 }
 
+function elapsedWithVisibleFragment(
+  game: SudokuGameState,
+  visibleStart: number | null,
+  clock: SudokuClock,
+): number {
+  if (game.status !== 'playing' || visibleStart === null) return game.elapsedMs
+
+  const delta = readClockNow(clock) - visibleStart
+  if (!Number.isFinite(delta) || !Number.isInteger(delta) || delta < 0) {
+    throw new Error(
+      `Sudoku clock delta must be a finite non-negative integer; received ${String(delta)}`,
+    )
+  }
+
+  const elapsedMs = game.elapsedMs + delta
+  if (!Number.isFinite(elapsedMs) || !Number.isInteger(elapsedMs) || elapsedMs < 0) {
+    throw new Error(
+      `Sudoku elapsed time must be a finite non-negative integer; received ${String(elapsedMs)}`,
+    )
+  }
+  return elapsedMs
+}
+
 export function useSudokuGame({
   storage,
   puzzles,
@@ -110,6 +133,7 @@ export function useSudokuGame({
     ),
     notice: null,
   }))
+  const [, setDisplayRevision] = useState(0)
   const initialStorageRef = useRef(storage)
   const initialPuzzlesRef = useRef(puzzles)
   const gameRef = useRef(state.game)
@@ -121,6 +145,7 @@ export function useSudokuGame({
   const timerIdRef = useRef<number | null>(null)
   const timerClockRef = useRef<SudokuClock | null>(null)
   const mountedRef = useRef(false)
+  const pageSuspendedRef = useRef(false)
 
   useLayoutEffect(() => {
     if (initializedRef.current) return
@@ -204,8 +229,14 @@ export function useSudokuGame({
     return next
   }, [])
 
+  const requestDisplayRender = useCallback((): void => {
+    if (!mountedRef.current) return
+    setDisplayRevision((revision) => revision + 1)
+  }, [])
+
   const startVisibleTiming = useCallback((): void => {
     if (
+      pageSuspendedRef.current ||
       gameRef.current.status !== 'playing' ||
       typeof document === 'undefined' ||
       document.visibilityState !== 'visible'
@@ -222,17 +253,17 @@ export function useSudokuGame({
     const timerId = activeClock.setInterval(() => {
       if (
         !mountedRef.current ||
+        pageSuspendedRef.current ||
         gameRef.current.status !== 'playing' ||
         document.visibilityState !== 'visible'
       ) {
         return
       }
-      const now = readClockNow(clockRef.current)
-      materializeVisibleFragment(now, true, true)
+      requestDisplayRender()
     }, 1_000)
     timerIdRef.current = timerId
     timerClockRef.current = activeClock
-  }, [materializeVisibleFragment])
+  }, [requestDisplayRender])
 
   const persistChangedGame = useCallback((
     game: SudokuGameState,
@@ -332,6 +363,7 @@ export function useSudokuGame({
 
   useLayoutEffect(() => {
     mountedRef.current = true
+    pageSuspendedRef.current = false
 
     const handleVisibilityChange = (): void => {
       if (document.visibilityState === 'visible') {
@@ -339,7 +371,10 @@ export function useSudokuGame({
         return
       }
 
-      if (gameRef.current.status === 'playing') {
+      if (
+        gameRef.current.status === 'playing' &&
+        visibleStartRef.current !== null
+      ) {
         const now = readClockNow(clockRef.current)
         const game = materializeVisibleFragment(now, false, true)
         stopTimer()
@@ -350,33 +385,48 @@ export function useSudokuGame({
     }
 
     const handlePageHide = (): void => {
-      if (gameRef.current.status !== 'playing') return
+      pageSuspendedRef.current = true
+      if (
+        gameRef.current.status !== 'playing' ||
+        visibleStartRef.current === null
+      ) {
+        stopTimer()
+        return
+      }
       const now = readClockNow(clockRef.current)
-      const game = materializeVisibleFragment(
-        now,
-        document.visibilityState === 'visible',
-        false,
-      )
+      const game = materializeVisibleFragment(now, false, false)
+      stopTimer()
       storageRef.current.save(game, now)
+    }
+
+    const handlePageShow = (): void => {
+      pageSuspendedRef.current = false
+      updateGame(gameRef.current)
+      startVisibleTiming()
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener('pageshow', handlePageShow)
     startVisibleTiming()
 
     return () => {
       mountedRef.current = false
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener('pageshow', handlePageShow)
 
-      if (gameRef.current.status === 'playing') {
+      if (
+        gameRef.current.status === 'playing' &&
+        visibleStartRef.current !== null
+      ) {
         const now = readClockNow(clockRef.current)
         const game = materializeVisibleFragment(now, false, false)
         storageRef.current.save(game, now)
       }
       stopTimer()
     }
-  }, [materializeVisibleFragment, showStorageUnavailableNotice, startVisibleTiming, stopTimer])
+  }, [materializeVisibleFragment, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 
   const dismissNotice = useCallback((): void => {
     setState((current) => ({ ...current, notice: null }))
@@ -390,7 +440,13 @@ export function useSudokuGame({
     game: state.game,
     conflicts,
     notice: state.notice,
-    elapsedMs: state.game.elapsedMs,
+    get elapsedMs(): number {
+      return elapsedWithVisibleFragment(
+        gameRef.current,
+        visibleStartRef.current,
+        clockRef.current,
+      )
+    },
     hasProgress: state.game.history.length > 0,
     select,
     move,

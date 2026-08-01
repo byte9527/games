@@ -516,10 +516,12 @@ describe('useSudokuGame', () => {
       }))
 
       act(() => clock.advance(2_500))
-      expect(result.current.elapsedMs).toBe(2_000)
+      expect(result.current.elapsedMs).toBe(2_500)
+      expect(result.current.game.elapsedMs).toBe(0)
 
       act(() => visibility.set('hidden'))
       expect(result.current.elapsedMs).toBe(2_500)
+      expect(result.current.game.elapsedMs).toBe(2_500)
       expect(storage.saved.at(-1)?.game.elapsedMs).toBe(2_500)
       expect(clock.activeTimerCount).toBe(0)
 
@@ -528,7 +530,7 @@ describe('useSudokuGame', () => {
 
       act(() => visibility.set('visible'))
       act(() => clock.advance(1_500))
-      expect(result.current.elapsedMs).toBe(3_500)
+      expect(result.current.elapsedMs).toBe(4_000)
       expect(clock.activeTimerCount).toBe(1)
     } finally {
       visibility.restore()
@@ -545,10 +547,33 @@ describe('useSudokuGame', () => {
         clock,
       }))
 
-      clock.jump(5_250)
+      clock.jump(5_500)
       act(() => clock.fireIntervalsOnce())
 
-      expect(result.current.elapsedMs).toBe(5_250)
+      expect(result.current.elapsedMs).toBe(5_500)
+      expect(result.current.game.elapsedMs).toBe(0)
+    } finally {
+      visibility.restore()
+    }
+  })
+
+  it('动作发生时才把当前可见片段物化到 core game 与存档', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      const storage = new FakeStorage()
+      const { result } = renderHook(() => useSudokuGame({
+        storage,
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+
+      act(() => clock.advance(2_500))
+      expect(result.current.game.elapsedMs).toBe(0)
+
+      act(() => result.current.select(2))
+      expect(result.current.game.elapsedMs).toBe(2_500)
+      expect(storage.saved.at(-1)?.game.elapsedMs).toBe(2_500)
     } finally {
       visibility.restore()
     }
@@ -750,16 +775,20 @@ describe('useSudokuGame', () => {
       expect(clock.activeTimerCount).toBe(1)
       const documentAdds = addDocumentListener.mock.calls.filter(([type]) => type === 'visibilitychange').length
       const documentRemoves = removeDocumentListener.mock.calls.filter(([type]) => type === 'visibilitychange').length
-      const windowAdds = addWindowListener.mock.calls.filter(([type]) => type === 'pagehide').length
-      const windowRemoves = removeWindowListener.mock.calls.filter(([type]) => type === 'pagehide').length
+      const pagehideAdds = addWindowListener.mock.calls.filter(([type]) => type === 'pagehide').length
+      const pagehideRemoves = removeWindowListener.mock.calls.filter(([type]) => type === 'pagehide').length
+      const pageshowAdds = addWindowListener.mock.calls.filter(([type]) => type === 'pageshow').length
+      const pageshowRemoves = removeWindowListener.mock.calls.filter(([type]) => type === 'pageshow').length
       expect(documentAdds).toBe(documentRemoves + 1)
-      expect(windowAdds).toBe(windowRemoves + 1)
+      expect(pagehideAdds).toBe(pagehideRemoves + 1)
+      expect(pageshowAdds).toBe(pageshowRemoves + 1)
 
       hook.unmount()
       expect(clock.clearedTimerIds).toHaveLength(clock.createdTimerIds.length)
       expect(clock.activeTimerCount).toBe(0)
       expect(removeDocumentListener.mock.calls.filter(([type]) => type === 'visibilitychange')).toHaveLength(documentAdds)
-      expect(removeWindowListener.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(windowAdds)
+      expect(removeWindowListener.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(pagehideAdds)
+      expect(removeWindowListener.mock.calls.filter(([type]) => type === 'pageshow')).toHaveLength(pageshowAdds)
     } finally {
       addDocumentListener.mockRestore()
       removeDocumentListener.mockRestore()
@@ -791,7 +820,7 @@ describe('useSudokuGame', () => {
     }
   })
 
-  it('pagehide 不 setState，但同步保存最新 playing ref', () => {
+  it('pagehide 保存并停止计时，pageshow 后从唯一新起点恢复', () => {
     const visibility = installVisibility('visible')
     try {
       const clock = new FakeClock()
@@ -806,7 +835,57 @@ describe('useSudokuGame', () => {
       act(() => window.dispatchEvent(new PageTransitionEvent('pagehide')))
 
       expect(storage.saved.at(-1)?.game.elapsedMs).toBe(1_700)
-      expect(result.current.elapsedMs).toBe(0)
+      expect(storage.saved).toHaveLength(1)
+      expect(clock.activeTimerCount).toBe(0)
+      expect(result.current.game.elapsedMs).toBe(0)
+      const pagehideElapsed = result.current.elapsedMs
+
+      act(() => clock.advance(1_000))
+      expect(result.current.elapsedMs).toBe(pagehideElapsed)
+      expect(result.current.game.elapsedMs).toBe(0)
+      expect(storage.saved).toHaveLength(1)
+
+      act(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
+      act(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
+      act(() => visibility.set('visible'))
+      expect(clock.activeTimerCount).toBe(1)
+      expect(result.current.game.elapsedMs).toBe(1_700)
+
+      act(() => clock.advance(1_000))
+      expect(result.current.elapsedMs).toBe(2_700)
+    } finally {
+      visibility.restore()
+    }
+  })
+
+  it('重复 hidden 及 hidden 后 pagehide 不重复保存，恢复后新片段可再次保存', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      const storage = new FakeStorage()
+      const { result } = renderHook(() => useSudokuGame({
+        storage,
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+
+      act(() => clock.advance(2_500))
+      act(() => visibility.set('hidden'))
+      act(() => visibility.set('hidden'))
+      act(() => window.dispatchEvent(new PageTransitionEvent('pagehide')))
+      expect(storage.saved).toHaveLength(1)
+      expect(storage.saved[0]?.game.elapsedMs).toBe(2_500)
+
+      act(() => visibility.set('visible'))
+      expect(clock.activeTimerCount).toBe(0)
+      act(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
+      expect(clock.activeTimerCount).toBe(1)
+
+      act(() => clock.advance(1_000))
+      act(() => visibility.set('hidden'))
+      expect(storage.saved).toHaveLength(2)
+      expect(storage.saved[1]?.game.elapsedMs).toBe(3_500)
+      expect(result.current.elapsedMs).toBe(3_500)
     } finally {
       visibility.restore()
     }

@@ -50,6 +50,11 @@ interface InvalidMusicRegistration {
 
 type MusicRegistration = ValidMusicRegistration | InvalidMusicRegistration
 
+interface TrustedToggleActivation {
+  readonly event: Event
+  readonly timerId: number
+}
+
 interface InitialPreference {
   readonly enabled: boolean
   readonly notice: string | null
@@ -143,7 +148,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   const registrationsRef = useRef(new Map<symbol, MusicRegistration>())
   const engineRef = useRef<MusicEnginePort | null>(null)
   const unlockPromiseRef = useRef<Promise<void> | null>(null)
-  const trustedToggleActivationRef = useRef<Event | null>(null)
+  const trustedToggleActivationRef = useRef<TrustedToggleActivation | null>(null)
   const engineFactoryRef = useRef<MusicEngineFactory>(engineFactory ?? createDefaultMusicEngine)
   const disposedRef = useRef(false)
   engineFactoryRef.current = engineFactory ?? createDefaultMusicEngine
@@ -200,9 +205,19 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return trackedUnlock
   }, [updateAvailability])
 
-  const toggle = useCallback(() => {
-    const hasTrustedUserActivation = trustedToggleActivationRef.current?.isTrusted === true
+  const clearTrustedToggleActivation = useCallback((expectedEvent?: Event): Event | null => {
+    const activation = trustedToggleActivationRef.current
+    if (activation === null || (expectedEvent !== undefined && activation.event !== expectedEvent)) {
+      return null
+    }
+
     trustedToggleActivationRef.current = null
+    window.clearTimeout(activation.timerId)
+    return activation.event
+  }, [])
+
+  const toggle = useCallback(() => {
+    const hasTrustedUserActivation = clearTrustedToggleActivation()?.isTrusted === true
     const nextEnabled = !enabledRef.current
     enabledRef.current = nextEnabled
 
@@ -218,7 +233,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     if (nextEnabled && hasTrustedUserActivation) {
       void ensureEngineReady(true)
     }
-  }, [ensureEngineReady, storageAdapter, updateAvailability])
+  }, [clearTrustedToggleActivation, ensureEngineReady, storageAdapter, updateAvailability])
 
   const dismissNotice = useCallback(() => {
     setNotice(null)
@@ -265,20 +280,14 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return () => {
       disposedRef.current = true
       unlockPromiseRef.current = null
-      trustedToggleActivationRef.current = null
+      clearTrustedToggleActivation()
       const engine = engineRef.current
       engineRef.current = null
       if (engine !== null) disposeEngine(engine)
     }
-  }, [])
+  }, [clearTrustedToggleActivation])
 
   useEffect(() => {
-    const clearTrustedToggleActivation = (event: Event) => {
-      if (trustedToggleActivationRef.current === event) {
-        trustedToggleActivationRef.current = null
-      }
-    }
-
     const recordTrustedToggleActivation = (event: Event) => {
       if (!event.isTrusted) return
       if (
@@ -288,16 +297,23 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
         return
       }
 
-      trustedToggleActivationRef.current = event
-      window.setTimeout(() => clearTrustedToggleActivation(event), 0)
+      clearTrustedToggleActivation()
+      const timerId = window.setTimeout(() => {
+        const activation = trustedToggleActivationRef.current
+        if (activation?.event === event && activation.timerId === timerId) {
+          trustedToggleActivationRef.current = null
+        }
+      }, 0)
+      trustedToggleActivationRef.current = { event, timerId }
     }
     document.addEventListener('click', recordTrustedToggleActivation, true)
     document.addEventListener('click', clearTrustedToggleActivation)
     return () => {
       document.removeEventListener('click', recordTrustedToggleActivation, true)
       document.removeEventListener('click', clearTrustedToggleActivation)
+      clearTrustedToggleActivation()
     }
-  }, [])
+  }, [clearTrustedToggleActivation])
 
   useEffect(() => {
     if (!enabled || availability !== 'locked') return

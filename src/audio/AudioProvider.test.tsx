@@ -232,6 +232,87 @@ describe('AudioProvider', () => {
     expect(engine.unlock).not.toHaveBeenCalled()
   })
 
+  it('可信开关 click 被 toggle 同步消费时取消任务兜底 timer', () => {
+    render(
+      <AudioProvider storage={createStorage({ kind: 'loaded', enabled: false })}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
+    const toggle = screen.getByRole('button', { name: 'toggle' })
+
+    documentEventBoundary.dispatchTrustedCapture('click', toggle)
+    const timerId = setTimeoutSpy.mock.results.at(-1)?.value
+    if (timerId === undefined) throw new Error('预期可信 click 安排任务兜底 timer')
+
+    fireEvent.click(toggle)
+
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(timerId)
+  })
+
+  it('可信开关 click capture 后卸载 Provider 会取消任务兜底 timer', () => {
+    const view = render(
+      <AudioProvider storage={createStorage({ kind: 'loaded', enabled: false })}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
+    const toggle = screen.getByRole('button', { name: 'toggle' })
+
+    documentEventBoundary.dispatchTrustedCapture('click', toggle)
+    const timerId = setTimeoutSpy.mock.results.at(-1)?.value
+    if (timerId === undefined) throw new Error('预期可信 click 安排任务兜底 timer')
+
+    view.unmount()
+
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(timerId)
+  })
+
+  it('新的可信开关 click 会取消旧 timer，且旧回调不能清除新事件令牌', () => {
+    const engine = createEngine()
+    const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)
+    render(
+      <AudioProvider
+        engineFactory={engineFactory}
+        storage={createStorage({ kind: 'loaded', enabled: false })}
+      >
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    const timerCallbacks: VoidFunction[] = []
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation((handler) => {
+      if (typeof handler !== 'function') throw new Error('预期 timer handler 为函数')
+      timerCallbacks.push(() => handler())
+      return timerCallbacks.length
+    })
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout')
+    const toggle = screen.getByRole('button', { name: 'toggle' })
+
+    documentEventBoundary.dispatchTrustedCapture('click', toggle)
+    documentEventBoundary.dispatchTrustedCapture('click', toggle)
+
+    expect(setTimeoutSpy).toHaveBeenCalledTimes(2)
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1)
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(1)
+    const oldTimerCallback = timerCallbacks[0]
+    if (oldTimerCallback === undefined) throw new Error('预期存在旧 timer 回调')
+    oldTimerCallback()
+
+    fireEvent.click(toggle)
+
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(2)
+    expect(clearTimeoutSpy).toHaveBeenLastCalledWith(2)
+    expect(engineFactory).toHaveBeenCalledTimes(1)
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+  })
+
   it('未被同步消费的可信开关 click 在当前事件任务结束后失效', async () => {
     const engine = createEngine()
     const engineFactory = vi.fn<MusicEngineFactory>().mockReturnValue(engine)

@@ -77,4 +77,77 @@ describe('music score', () => {
   ])('rejects $0', (_name, score, message) => {
     expect(validateMusicScore(score)).toEqual({ ok: false, message })
   })
+
+  it.each([
+    ['bpm NaN', createScore({ bpm: Number.NaN }), '速度必须大于 0'],
+    ['beats per loop Infinity', createScore({ beatsPerLoop: Number.POSITIVE_INFINITY }), '循环拍数必须大于 0'],
+    ['master gain NaN', createScore({ masterGain: Number.NaN }), '总音量必须位于 0 到 1 之间'],
+    ['fade seconds Infinity', createScore({ fadeSeconds: Number.POSITIVE_INFINITY }), '淡入淡出时间不能为负数'],
+    [
+      'note beat NaN',
+      createScore({ notes: [{ beat: Number.NaN, durationBeats: 1, midi: 60, velocity: 0.5, instrument: 'pluck' }] }),
+      '音符必须位于循环范围内',
+    ],
+    [
+      'duration Infinity',
+      createScore({ notes: [{ beat: 0, durationBeats: Number.POSITIVE_INFINITY, midi: 60, velocity: 0.5, instrument: 'pluck' }] }),
+      '音符时值必须大于 0',
+    ],
+    [
+      'velocity NaN',
+      createScore({ notes: [{ beat: 0, durationBeats: 1, midi: 60, velocity: Number.NaN, instrument: 'pluck' }] }),
+      '音符力度必须位于 0 到 1 之间',
+    ],
+    [
+      'MIDI Infinity',
+      createScore({ notes: [{ beat: 0, durationBeats: 1, midi: Number.POSITIVE_INFINITY, velocity: 0.5, instrument: 'pluck' }] }),
+      'MIDI 音高必须位于 0 到 127 之间',
+    ],
+  ])('rejects non-finite $0', (_name, score, message) => {
+    expect(validateMusicScore(score)).toEqual({ ok: false, message })
+  })
+
+  it.each([
+    ['negative bpm', createScore({ bpm: -1 }), '速度必须大于 0'],
+    ['negative beats per loop', createScore({ beatsPerLoop: -1 }), '循环拍数必须大于 0'],
+    ['negative master gain', createScore({ masterGain: -0.1 }), '总音量必须位于 0 到 1 之间'],
+    [
+      'negative note beat',
+      createScore({ notes: [{ beat: -1, durationBeats: 1, midi: 60, velocity: 0.5, instrument: 'pluck' }] }),
+      '音符必须位于循环范围内',
+    ],
+    [
+      'negative duration',
+      createScore({ notes: [{ beat: 0, durationBeats: -1, midi: 60, velocity: 0.5, instrument: 'pluck' }] }),
+      '音符时值必须大于 0',
+    ],
+    [
+      'negative velocity',
+      createScore({ notes: [{ beat: 0, durationBeats: 1, midi: 60, velocity: -0.1, instrument: 'pluck' }] }),
+      '音符力度必须位于 0 到 1 之间',
+    ],
+    [
+      'negative MIDI pitch',
+      createScore({ notes: [{ beat: 0, durationBeats: 1, midi: -1, velocity: 0.5, instrument: 'pluck' }] }),
+      'MIDI 音高必须位于 0 到 127 之间',
+    ],
+  ])('rejects negative $0', (_name, score, message) => {
+    expect(validateMusicScore(score)).toEqual({ ok: false, message })
+  })
+
+  it('accepts a note that ends exactly at the loop boundary', () => {
+    const score = createScore({
+      notes: [{ beat: 6, durationBeats: 2, midi: 60, velocity: 0.5, instrument: 'pluck' }],
+    })
+
+    expect(validateMusicScore(score)).toEqual({ ok: true })
+  })
+
+  it('checks non-positive duration before considering the note end', () => {
+    const score = createScore({
+      notes: [{ beat: 7, durationBeats: 0, midi: 60, velocity: 0.5, instrument: 'pluck' }],
+    })
+
+    expect(validateMusicScore(score)).toEqual({ ok: false, message: '音符时值必须大于 0' })
+  })
 })

@@ -22,6 +22,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isStoredPreference(value: unknown): value is StoredMusicPreference {
   return (
     isRecord(value) &&
+    Object.keys(value).length === 2 &&
     Object.hasOwn(value, 'version') &&
     value.version === 1 &&
     Object.hasOwn(value, 'enabled') &&

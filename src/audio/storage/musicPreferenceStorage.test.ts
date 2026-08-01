@@ -97,6 +97,11 @@ describe('music preference storage', () => {
     { name: 'enabled 不是布尔值', serialized: JSON.stringify({ version: 1, enabled: 'true' }) },
     { name: '数组', serialized: JSON.stringify([{ version: 1, enabled: true }]) },
     { name: 'null', serialized: 'null' },
+    { name: '存在意外字段', serialized: JSON.stringify({ version: 1, enabled: true, unexpected: 1 }) },
+    {
+      name: 'JSON 中存在 __proto__ 字段',
+      serialized: '{"version":1,"enabled":true,"__proto__":{"polluted":true}}',
+    },
     { name: '损坏 JSON', serialized: '{' },
   ])('拒绝 $name，且 JSON.parse 失败仍归类为 invalid', ({ serialized }) => {
     const storage = new MemoryStorage()
@@ -120,6 +125,8 @@ describe('music preference storage', () => {
   })
 
   it('localStorage getter 抛错时创建稳定的不可用浏览器端口，并恢复 window 状态', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage')
+
     withThrowingLocalStorageGetter(() => {
       const storage = createBrowserMusicPreferenceStorage()
 
@@ -128,5 +135,19 @@ describe('music preference storage', () => {
       expect(storage.load()).toEqual({ kind: 'unavailable' })
       expect(storage.save(false)).toEqual({ ok: false })
     })
+
+    expect(Object.getOwnPropertyDescriptor(window, 'localStorage')).toEqual(descriptor)
+  })
+
+  it('localStorage getter 测试中的 action 抛错时仍恢复 window descriptor', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage')
+
+    expect(() => {
+      withThrowingLocalStorageGetter(() => {
+        throw new Error('测试 action 失败')
+      })
+    }).toThrow('测试 action 失败')
+
+    expect(Object.getOwnPropertyDescriptor(window, 'localStorage')).toEqual(descriptor)
   })
 })

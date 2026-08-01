@@ -25,8 +25,14 @@ export interface BrowserMusicEngineDependencies {
   readonly clearTimer: (timerId: number) => void
 }
 
-function isNotAllowedError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === 'NotAllowedError'
+function hasErrorName(error: unknown, expectedName: string): boolean {
+  if ((typeof error !== 'object' || error === null) && typeof error !== 'function') return false
+
+  try {
+    return Reflect.get(error, 'name') === expectedName
+  } catch {
+    return false
+  }
 }
 
 export function createBrowserMusicEngine({
@@ -38,6 +44,8 @@ export function createBrowserMusicEngine({
   let currentScore: MusicScore | null = null
   let loopTimerId: number | null = null
   let cleanupTimerId: number | null = null
+  let unlockPromise: Promise<MusicUnlockResult> | null = null
+  let disposalPromise: Promise<void> | null = null
   let unlocked = false
   let disposed = false
 
@@ -53,42 +61,98 @@ export function createBrowserMusicEngine({
     cleanupTimerId = null
   }
 
-  const scheduleLoop = (score: MusicScore, requestedStartTime: number) => {
+  const scheduleLoop = (
+    score: MusicScore,
+    requestedStartTime: number,
+    preserveTimeGrid: boolean,
+  ) => {
     if (backend === null || disposed || !unlocked || currentScore?.id !== score.id) return
 
-    const startTime = Math.max(
-      requestedStartTime,
-      backend.getCurrentTime() + schedulingLookaheadSeconds,
-    )
+    const currentTime = backend.getCurrentTime()
+    const earliestStartTime = currentTime + schedulingLookaheadSeconds
+    const durationSeconds = loopDurationSeconds(score)
+    const skippedLoops = preserveTimeGrid && requestedStartTime < earliestStartTime
+      ? Math.ceil((earliestStartTime - requestedStartTime) / durationSeconds)
+      : 0
+    const startTime = preserveTimeGrid
+      ? requestedStartTime + skippedLoops * durationSeconds
+      : Math.max(requestedStartTime, earliestStartTime)
     for (const note of buildLoopSchedule(score, startTime)) backend.schedule(note)
 
-    const nextStart = startTime + loopDurationSeconds(score)
+    const nextStart = startTime + durationSeconds
     const delayMs = Math.max(
       0,
       (nextStart - backend.getCurrentTime() - loopTimerLeadSeconds) * 1000,
     )
     loopTimerId = setTimer(() => {
       loopTimerId = null
-      scheduleLoop(score, nextStart)
+      scheduleLoop(score, nextStart, true)
     }, delayMs)
   }
 
-  return {
-    async unlock(): Promise<MusicUnlockResult> {
-      if (disposed) return { ok: false, kind: 'unavailable' }
+  const performUnlock = async (): Promise<MusicUnlockResult> => {
+    if (disposed) return { ok: false, kind: 'unavailable' }
 
-      try {
-        if (backend === null) backend = createBackend()
-        await backend.resume()
-        if (disposed) return { ok: false, kind: 'unavailable' }
-        unlocked = true
-        return { ok: true }
-      } catch (error) {
-        unlocked = false
-        return isNotAllowedError(error)
-          ? { ok: false, kind: 'blocked' }
-          : { ok: false, kind: 'unavailable' }
-      }
+    try {
+      if (backend === null) backend = createBackend()
+      await backend.resume()
+      if (disposed) return { ok: false, kind: 'unavailable' }
+      unlocked = true
+      return { ok: true }
+    } catch (error) {
+      unlocked = false
+      if (disposed) return { ok: false, kind: 'unavailable' }
+      return hasErrorName(error, 'NotAllowedError')
+        ? { ok: false, kind: 'blocked' }
+        : { ok: false, kind: 'unavailable' }
+    }
+  }
+
+  const disposeBackend = async (backendToDispose: AudioBackend | null): Promise<void> => {
+    if (backendToDispose === null) return
+
+    let stopError: unknown
+    let closeError: unknown
+    let stopFailed = false
+    let closeFailed = false
+
+    try {
+      backendToDispose.stopScheduled()
+    } catch (error) {
+      stopError = error
+      stopFailed = true
+    }
+
+    try {
+      await backendToDispose.close()
+    } catch (error) {
+      closeError = error
+      closeFailed = true
+    }
+
+    if (stopFailed && closeFailed) {
+      throw new AggregateError([stopError, closeError], '音乐后端停止和关闭均失败')
+    }
+    if (stopFailed) throw stopError
+    if (closeFailed) throw closeError
+  }
+
+  return {
+    unlock(): Promise<MusicUnlockResult> {
+      if (disposed) return Promise.resolve({ ok: false, kind: 'unavailable' })
+      if (unlockPromise !== null) return unlockPromise
+
+      const pendingUnlock = performUnlock()
+      unlockPromise = pendingUnlock
+      void pendingUnlock.then(
+        () => {
+          if (unlockPromise === pendingUnlock) unlockPromise = null
+        },
+        () => {
+          if (unlockPromise === pendingUnlock) unlockPromise = null
+        },
+      )
+      return pendingUnlock
     },
 
     play(score: MusicScore): void {
@@ -106,10 +170,13 @@ export function createBrowserMusicEngine({
 
       currentScore = score
       backend.fadeMasterTo(score.masterGain, score.fadeSeconds)
-      scheduleLoop(score, backend.getCurrentTime() + schedulingLookaheadSeconds)
+      scheduleLoop(score, backend.getCurrentTime() + schedulingLookaheadSeconds, false)
     },
 
     pause(fadeSeconds: number): void {
+      if (!Number.isFinite(fadeSeconds) || fadeSeconds < 0) {
+        throw new Error('淡出时间必须是有限的非负数')
+      }
       if (backend === null || disposed || !unlocked) return
 
       cancelLoopTimer()
@@ -136,8 +203,8 @@ export function createBrowserMusicEngine({
       }
     },
 
-    dispose(): void {
-      if (disposed) return
+    dispose(): Promise<void> {
+      if (disposalPromise !== null) return disposalPromise
       disposed = true
       unlocked = false
       cancelLoopTimer()
@@ -146,28 +213,56 @@ export function createBrowserMusicEngine({
 
       const backendToDispose = backend
       backend = null
-      if (backendToDispose === null) return
-
-      try {
-        backendToDispose.stopScheduled()
-      } finally {
-        void backendToDispose.close()
-      }
+      disposalPromise = disposeBackend(backendToDispose)
+      return disposalPromise
     },
   }
 }
 
-function registerSource(sources: Set<OscillatorNode>, source: OscillatorNode): void {
-  sources.add(source)
+interface AudioVoice {
+  readonly source: OscillatorNode
+  readonly envelope: GainNode
+  readonly filter: BiquadFilterNode | null
+  cleaned: boolean
+}
+
+function cleanupVoice(voices: Set<AudioVoice>, voice: AudioVoice): void {
+  if (voice.cleaned) return
+  voice.cleaned = true
+  voices.delete(voice)
+
+  let firstError: unknown
+  let cleanupFailed = false
+  for (const node of [voice.source, voice.envelope, voice.filter]) {
+    if (node === null) continue
+    try {
+      node.disconnect()
+    } catch (error) {
+      if (!cleanupFailed) firstError = error
+      cleanupFailed = true
+    }
+  }
+
+  if (cleanupFailed) throw firstError
+}
+
+function registerVoice(
+  voices: Set<AudioVoice>,
+  source: OscillatorNode,
+  envelope: GainNode,
+  filter: BiquadFilterNode | null,
+): void {
+  const voice: AudioVoice = { source, envelope, filter, cleaned: false }
+  voices.add(voice)
   source.addEventListener('ended', () => {
-    sources.delete(source)
+    cleanupVoice(voices, voice)
   }, { once: true })
 }
 
 function schedulePluck(
   context: AudioContext,
   master: GainNode,
-  sources: Set<OscillatorNode>,
+  voices: Set<AudioVoice>,
   note: ScheduledMusicNote,
 ): void {
   const source = context.createOscillator()
@@ -185,7 +280,7 @@ function schedulePluck(
   envelope.gain.exponentialRampToValueAtTime(minimumExponentialGain, endTime)
   source.connect(envelope)
   envelope.connect(master)
-  registerSource(sources, source)
+  registerVoice(voices, source, envelope, null)
   source.start(note.startTime)
   source.stop(endTime + 0.05)
 }
@@ -193,7 +288,7 @@ function schedulePluck(
 function scheduleSustainedTone(
   context: AudioContext,
   master: GainNode,
-  sources: Set<OscillatorNode>,
+  voices: Set<AudioVoice>,
   note: ScheduledMusicNote,
   attackLimitSeconds: number,
   filter: BiquadFilterNode | null,
@@ -219,14 +314,14 @@ function scheduleSustainedTone(
     envelope.connect(filter)
     filter.connect(master)
   }
-  registerSource(sources, source)
+  registerVoice(voices, source, envelope, filter)
   source.start(note.startTime)
   source.stop(endTime + 0.05)
 }
 
 export function createNativeAudioBackend(context: AudioContext): AudioBackend {
   const master = context.createGain()
-  const sources = new Set<OscillatorNode>()
+  const voices = new Set<AudioVoice>()
   master.gain.value = 0
   master.connect(context.destination)
 
@@ -242,17 +337,17 @@ export function createNativeAudioBackend(context: AudioContext): AudioBackend {
     schedule(note: ScheduledMusicNote): void {
       switch (note.instrument) {
         case 'pluck':
-          schedulePluck(context, master, sources, note)
+          schedulePluck(context, master, voices, note)
           return
         case 'flute': {
           const filter = context.createBiquadFilter()
           filter.type = 'lowpass'
           filter.frequency.setValueAtTime(1800, note.startTime)
-          scheduleSustainedTone(context, master, sources, note, 0.35, filter)
+          scheduleSustainedTone(context, master, voices, note, 0.35, filter)
           return
         }
         case 'drone':
-          scheduleSustainedTone(context, master, sources, note, 1, null)
+          scheduleSustainedTone(context, master, voices, note, 1, null)
           return
         default: {
           const exhaustiveInstrument: never = note.instrument
@@ -263,25 +358,33 @@ export function createNativeAudioBackend(context: AudioContext): AudioBackend {
 
     fadeMasterTo(value: number, durationSeconds: number): void {
       const now = context.currentTime
-      master.gain.cancelScheduledValues(now)
-      master.gain.setValueAtTime(master.gain.value, now)
-      master.gain.linearRampToValueAtTime(value, now + durationSeconds)
+      master.gain.cancelAndHoldAtTime(now)
+      if (durationSeconds === 0) {
+        master.gain.setValueAtTime(value, now)
+      } else {
+        master.gain.linearRampToValueAtTime(value, now + durationSeconds)
+      }
     },
 
     stopScheduled(): void {
       let firstError: unknown
       let hasUnexpectedError = false
 
-      for (const source of sources) {
+      for (const voice of voices) {
         try {
-          source.stop()
+          voice.source.stop()
         } catch (error) {
-          if (!(error instanceof DOMException && error.name === 'InvalidStateError')) {
+          if (!hasErrorName(error, 'InvalidStateError')) {
             if (!hasUnexpectedError) firstError = error
             hasUnexpectedError = true
           }
         } finally {
-          sources.delete(source)
+          try {
+            cleanupVoice(voices, voice)
+          } catch (error) {
+            if (!hasUnexpectedError) firstError = error
+            hasUnexpectedError = true
+          }
         }
       }
 

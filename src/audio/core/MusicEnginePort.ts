@@ -9,7 +9,7 @@ export interface MusicEnginePort {
   play(score: MusicScore): void
   pause(fadeSeconds: number): void
   stop(): void
-  dispose(): void
+  dispose(): Promise<void>
 }
 
 export type MusicEngineFactory = () => MusicEnginePort | null

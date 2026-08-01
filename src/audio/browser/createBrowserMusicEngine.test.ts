@@ -88,6 +88,31 @@ describe('browser music engine lifecycle', () => {
     expect(backend.resume).toHaveBeenCalledTimes(2)
   })
 
+  it('shares one pending unlock operation across concurrent callers', async () => {
+    const backend = createFakeBackend()
+    let resolveResume: () => void = () => {
+      throw new Error('resume promise 尚未初始化')
+    }
+    const resumePromise = new Promise<void>((resolve) => {
+      resolveResume = resolve
+    })
+    backend.resume.mockReturnValue(resumePromise)
+    const { createBackend, engine } = createHarness(backend)
+
+    const firstUnlock = engine.unlock()
+    const secondUnlock = engine.unlock()
+
+    expect(secondUnlock).toBe(firstUnlock)
+    expect(createBackend).toHaveBeenCalledTimes(1)
+    expect(backend.resume).toHaveBeenCalledTimes(1)
+
+    resolveResume()
+    await expect(Promise.all([firstUnlock, secondUnlock])).resolves.toEqual([
+      { ok: true },
+      { ok: true },
+    ])
+  })
+
   it('starts the first loop at current time plus lookahead and creates its timer', async () => {
     const { backend, engine, setTimer } = createHarness()
     await engine.unlock()
@@ -112,6 +137,24 @@ describe('browser music engine lifecycle', () => {
     expect(backend.schedule.mock.calls[2]?.[0].startTime).toBe(14.05)
   })
 
+  it('skips missed loops without shifting the original loop time grid', async () => {
+    const { backend, engine, runTimer, setTimer } = createHarness()
+    await engine.unlock()
+    engine.play(score)
+    const firstTimerId = timerIdFromCall(setTimer, 0)
+
+    backend.getCurrentTime.mockReturnValue(14.2)
+    runTimer(firstTimerId)
+
+    expect(backend.schedule.mock.calls[2]?.[0].startTime).toBe(18.05)
+    const secondTimerId = timerIdFromCall(setTimer, 1)
+
+    backend.getCurrentTime.mockReturnValue(18.2)
+    runTimer(secondTimerId)
+
+    expect(backend.schedule.mock.calls[4]?.[0].startTime).toBe(22.05)
+  })
+
   it('keeps loop and pause cleanup timers as separate lifecycles', async () => {
     const { backend, callbacks, clearTimer, engine, runTimer, setTimer } = createHarness()
     await engine.unlock()
@@ -131,6 +174,30 @@ describe('browser music engine lifecycle', () => {
     runTimer(cleanupTimerId)
     expect(backend.stopScheduled).toHaveBeenCalledTimes(1)
   })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -0.1])(
+    'rejects invalid pause duration %s without changing active playback',
+    async (fadeSeconds) => {
+      const { backend, callbacks, clearTimer, engine, setTimer } = createHarness()
+      await engine.unlock()
+      engine.play(score)
+      const loopTimerId = timerIdFromCall(setTimer, 0)
+
+      expect(() => engine.pause(fadeSeconds)).toThrow('淡出时间必须是有限的非负数')
+
+      expect(clearTimer).not.toHaveBeenCalled()
+      expect(callbacks.has(loopTimerId)).toBe(true)
+      expect(backend.stopScheduled).not.toHaveBeenCalled()
+      expect(backend.fadeMasterTo).toHaveBeenCalledTimes(1)
+
+      engine.play(score)
+      expect(backend.schedule).toHaveBeenCalledTimes(score.notes.length)
+
+      engine.pause(0.1)
+      expect(clearTimer).toHaveBeenCalledWith(loopTimerId)
+      expect(callbacks.has(loopTimerId)).toBe(false)
+    },
+  )
 
   it('clears pause cleanup and old nodes before fading in and scheduling replay', async () => {
     const { backend, callbacks, clearTimer, engine, setTimer } = createHarness()
@@ -221,6 +288,29 @@ describe('browser music engine lifecycle', () => {
     expect(createBackend).toHaveBeenCalledTimes(1)
   })
 
+  it('recognizes a cross-realm shaped NotAllowedError', async () => {
+    const backend = createFakeBackend()
+    backend.resume.mockRejectedValueOnce({ name: 'NotAllowedError' })
+    const { engine } = createHarness(backend)
+
+    await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'blocked' })
+  })
+
+  it('treats an unreadable error name as unavailable without hiding the original failure boundary', async () => {
+    const backend = createFakeBackend()
+    const unreadableName = Object.create(null, {
+      name: {
+        get(): never {
+          throw new Error('name getter failed')
+        },
+      },
+    })
+    backend.resume.mockRejectedValueOnce(unreadableName)
+    const { engine } = createHarness(backend)
+
+    await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'unavailable' })
+  })
+
   it('returns unavailable when backend creation fails normally', async () => {
     const timers = createTimerHarness()
     const createBackend = vi.fn((): AudioBackend => {
@@ -260,9 +350,11 @@ describe('browser music engine lifecycle', () => {
     backend.stopScheduled.mockClear()
     backend.close.mockClear()
 
-    engine.dispose()
-    engine.dispose()
+    const firstDispose = engine.dispose()
+    const secondDispose = engine.dispose()
 
+    expect(secondDispose).toBe(firstDispose)
+    await Promise.all([firstDispose, secondDispose])
     expect(callbacks).toHaveLength(0)
     expect(clearTimer).toHaveBeenCalledTimes(1)
     expect(clearTimer).toHaveBeenCalledWith(loopTimerId)
@@ -279,7 +371,7 @@ describe('browser music engine lifecycle', () => {
     const { createBackend, engine } = createHarness(backend)
     await engine.unlock()
 
-    expect(() => engine.dispose()).toThrow('unexpected stop failure')
+    await expect(engine.dispose()).rejects.toThrow('unexpected stop failure')
     expect(backend.close).toHaveBeenCalledTimes(1)
     await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'unavailable' })
     expect(createBackend).toHaveBeenCalledTimes(1)
@@ -288,10 +380,91 @@ describe('browser music engine lifecycle', () => {
   it('returns unavailable after disposal without creating a backend', async () => {
     const { createBackend, engine } = createHarness()
 
-    engine.dispose()
+    await engine.dispose()
 
     await expect(engine.unlock()).resolves.toEqual({ ok: false, kind: 'unavailable' })
     expect(createBackend).not.toHaveBeenCalled()
+  })
+
+  it('waits for close and exposes a close rejection from dispose', async () => {
+    const backend = createFakeBackend()
+    let rejectClose: (error: Error) => void = (_error) => {
+      throw new Error('close promise 尚未初始化')
+    }
+    const closePromise = new Promise<void>((_resolve, reject) => {
+      rejectClose = reject
+    })
+    backend.close.mockReturnValue(closePromise)
+    const { engine } = createHarness(backend)
+    await engine.unlock()
+    const closeError = new Error('context close failed')
+
+    const disposal = engine.dispose()
+    let settled = false
+    void disposal.finally(() => {
+      settled = true
+    }).catch(() => undefined)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    rejectClose(closeError)
+    await expect(disposal).rejects.toBe(closeError)
+  })
+
+  it('preserves both stop and close failures when dispose encounters both', async () => {
+    const backend = createFakeBackend()
+    const stopError = new Error('source stop failed')
+    const closeError = new Error('context close failed')
+    backend.stopScheduled.mockImplementation(() => {
+      throw stopError
+    })
+    backend.close.mockRejectedValue(closeError)
+    const { engine } = createHarness(backend)
+    await engine.unlock()
+
+    const disposalError = await engine.dispose().catch((error: unknown) => error)
+
+    expect(disposalError).toBeInstanceOf(AggregateError)
+    if (!(disposalError instanceof AggregateError)) throw new Error('dispose 未返回 AggregateError')
+    expect(disposalError.errors).toEqual([stopError, closeError])
+  })
+
+  it('keeps a pending unlock unavailable when disposal finishes first', async () => {
+    const backend = createFakeBackend()
+    let resolveResume: () => void = () => {
+      throw new Error('resume promise 尚未初始化')
+    }
+    backend.resume.mockReturnValue(new Promise<void>((resolve) => {
+      resolveResume = resolve
+    }))
+    const { engine } = createHarness(backend)
+
+    const unlockResult = engine.unlock()
+    const disposal = engine.dispose()
+    resolveResume()
+
+    await expect(unlockResult).resolves.toEqual({ ok: false, kind: 'unavailable' })
+    await expect(disposal).resolves.toBeUndefined()
+    engine.play(score)
+    expect(backend.schedule).not.toHaveBeenCalled()
+  })
+
+  it('keeps a rejected pending unlock unavailable after disposal', async () => {
+    const backend = createFakeBackend()
+    let rejectResume: (reason: unknown) => void = (_reason) => {
+      throw new Error('resume promise 尚未初始化')
+    }
+    backend.resume.mockReturnValue(new Promise<void>((_resolve, reject) => {
+      rejectResume = reject
+    }))
+    const { engine } = createHarness(backend)
+
+    const unlockResult = engine.unlock()
+    const disposal = engine.dispose()
+    rejectResume({ name: 'NotAllowedError' })
+
+    await expect(unlockResult).resolves.toEqual({ ok: false, kind: 'unavailable' })
+    await expect(disposal).resolves.toBeUndefined()
   })
 })
 
@@ -299,6 +472,7 @@ function createAudioParam(value = 1) {
   return {
     value,
     cancelScheduledValues: vi.fn(),
+    cancelAndHoldAtTime: vi.fn(),
     setValueAtTime: vi.fn(),
     linearRampToValueAtTime: vi.fn(),
     exponentialRampToValueAtTime: vi.fn(),
@@ -310,6 +484,7 @@ function createNativeBackendHarness() {
   const gains: Array<{
     gain: ReturnType<typeof createAudioParam>
     connect: ReturnType<typeof vi.fn>
+    disconnect: ReturnType<typeof vi.fn>
   }> = []
   const oscillators: Array<{
     type: OscillatorType
@@ -318,11 +493,14 @@ function createNativeBackendHarness() {
     start: ReturnType<typeof vi.fn>
     stop: ReturnType<typeof vi.fn>
     addEventListener: ReturnType<typeof vi.fn>
+    disconnect: ReturnType<typeof vi.fn>
+    triggerEnded: () => void
   }> = []
   const filters: Array<{
     type: BiquadFilterType
     frequency: ReturnType<typeof createAudioParam>
     connect: ReturnType<typeof vi.fn>
+    disconnect: ReturnType<typeof vi.fn>
   }> = []
   const resume = vi.fn(() => Promise.resolve())
   const close = vi.fn(() => Promise.resolve())
@@ -334,18 +512,26 @@ function createNativeBackendHarness() {
     resume,
     close,
     createGain: vi.fn(() => {
-      const node = { gain: createAudioParam(), connect: vi.fn() }
+      const node = { gain: createAudioParam(), connect: vi.fn(), disconnect: vi.fn() }
       gains.push(node)
       return node
     }),
     createOscillator: vi.fn(() => {
+      let endedCallback: (() => void) | null = null
       const node = {
         type: 'sine' as OscillatorType,
         frequency: createAudioParam(),
         connect: vi.fn(),
+        disconnect: vi.fn(),
         start: vi.fn(),
         stop: vi.fn(),
-        addEventListener: vi.fn(),
+        addEventListener: vi.fn((_type: string, callback: () => void) => {
+          endedCallback = callback
+        }),
+        triggerEnded: () => {
+          if (endedCallback === null) throw new Error('ended callback 未注册')
+          endedCallback()
+        },
       }
       oscillators.push(node)
       return node
@@ -355,6 +541,7 @@ function createNativeBackendHarness() {
         type: 'lowpass' as BiquadFilterType,
         frequency: createAudioParam(),
         connect: vi.fn(),
+        disconnect: vi.fn(),
       }
       filters.push(node)
       return node
@@ -410,13 +597,51 @@ describe('native audio backend', () => {
 
     backend.fadeMasterTo(0.8, 0.5)
 
-    expect(masterGain.cancelScheduledValues).toHaveBeenCalledWith(10)
-    expect(masterGain.setValueAtTime).toHaveBeenCalledWith(0.3, 10)
+    expect(masterGain.cancelAndHoldAtTime).toHaveBeenCalledWith(10)
+    expect(masterGain.cancelScheduledValues).not.toHaveBeenCalled()
+    expect(masterGain.setValueAtTime).not.toHaveBeenCalled()
     expect(masterGain.linearRampToValueAtTime).toHaveBeenCalledWith(0.8, 10.5)
   })
 
+  it('sets an immediate master value after holding without creating a zero-length ramp', () => {
+    const { backend, gains } = createNativeBackendHarness()
+    const masterGain = gains[0]?.gain
+    if (masterGain === undefined) throw new Error('未创建主音量节点')
+
+    backend.fadeMasterTo(0, 0)
+
+    expect(masterGain.cancelAndHoldAtTime).toHaveBeenCalledWith(10)
+    expect(masterGain.setValueAtTime).toHaveBeenCalledWith(0, 10)
+    expect(masterGain.linearRampToValueAtTime).not.toHaveBeenCalled()
+  })
+
+  it('disconnects every node exactly once when a voice ends naturally', () => {
+    const { backend, filters, gains, oscillators } = createNativeBackendHarness()
+    backend.schedule({
+      startTime: 12,
+      durationSeconds: 1,
+      frequency: 440,
+      velocity: 0.5,
+      instrument: 'flute',
+    })
+    const source = oscillators[0]
+    const envelope = gains[1]
+    const filter = filters[0]
+    if (source === undefined || envelope === undefined || filter === undefined) {
+      throw new Error('未创建完整 flute voice')
+    }
+
+    source.triggerEnded()
+    backend.stopScheduled()
+
+    expect(source.disconnect).toHaveBeenCalledTimes(1)
+    expect(envelope.disconnect).toHaveBeenCalledTimes(1)
+    expect(filter.disconnect).toHaveBeenCalledTimes(1)
+    expect(source.stop).toHaveBeenCalledTimes(1)
+  })
+
   it('stops every source, ignores only InvalidStateError, and rethrows the first unknown error', () => {
-    const { backend, oscillators } = createNativeBackendHarness()
+    const { backend, filters, gains, oscillators } = createNativeBackendHarness()
     for (const instrument of ['pluck', 'flute', 'drone'] as const) {
       backend.schedule({
         startTime: 12,
@@ -443,11 +668,39 @@ describe('native audio backend', () => {
     expect(firstSource.stop).toHaveBeenCalledTimes(2)
     expect(secondSource.stop).toHaveBeenCalledTimes(2)
     expect(thirdSource.stop).toHaveBeenCalledTimes(2)
+    expect(oscillators.every((source) => source.disconnect.mock.calls.length === 1)).toBe(true)
+    expect(gains.slice(1).every((envelope) => envelope.disconnect.mock.calls.length === 1)).toBe(true)
+    expect(filters[0]?.disconnect).toHaveBeenCalledTimes(1)
 
+    for (const source of oscillators) source.triggerEnded()
     backend.stopScheduled()
     expect(firstSource.stop).toHaveBeenCalledTimes(2)
     expect(secondSource.stop).toHaveBeenCalledTimes(2)
     expect(thirdSource.stop).toHaveBeenCalledTimes(2)
+    expect(oscillators.every((source) => source.disconnect.mock.calls.length === 1)).toBe(true)
+    expect(gains.slice(1).every((envelope) => envelope.disconnect.mock.calls.length === 1)).toBe(true)
+    expect(filters[0]?.disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('recognizes cross-realm shaped InvalidStateError while still cleaning the voice', () => {
+    const { backend, gains, oscillators } = createNativeBackendHarness()
+    backend.schedule({
+      startTime: 12,
+      durationSeconds: 1,
+      frequency: 440,
+      velocity: 0.5,
+      instrument: 'pluck',
+    })
+    const source = oscillators[0]
+    const envelope = gains[1]
+    if (source === undefined || envelope === undefined) throw new Error('未创建 pluck voice')
+    source.stop.mockImplementation(() => {
+      throw { name: 'InvalidStateError' }
+    })
+
+    expect(() => backend.stopScheduled()).not.toThrow()
+    expect(source.disconnect).toHaveBeenCalledTimes(1)
+    expect(envelope.disconnect).toHaveBeenCalledTimes(1)
   })
 
   it('resumes and closes the context only while it remains open', async () => {

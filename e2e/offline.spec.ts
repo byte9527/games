@@ -7,14 +7,15 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
   )
 
   const errors: string[] = []
-  const mediaRequests: string[] = []
+  const httpRequests: string[] = []
 
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text())
   })
-  page.on('request', (request) => {
-    if (request.resourceType() === 'media') mediaRequests.push(request.url())
+  context.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.protocol === 'http:' || url.protocol === 'https:') httpRequests.push(url.href)
   })
 
   try {
@@ -45,8 +46,12 @@ test('应用缓存后可离线重新打开五子棋', async ({ context, page }, 
     await board.getByRole('button', { name: '第 8 行第 8 列，空位' }).click()
     await expect(board.getByRole('button', { name: '第 8 行第 8 列，黑棋' })).toBeVisible()
 
+    const appOrigin = new URL(page.url()).origin
+    const externalRequests = httpRequests.filter(
+      (requestUrl) => new URL(requestUrl).origin !== appOrigin,
+    )
     expect(errors).toEqual([])
-    expect(mediaRequests).toEqual([])
+    expect(externalRequests).toEqual([])
   } finally {
     await context.setOffline(false)
   }

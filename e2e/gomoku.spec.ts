@@ -72,16 +72,17 @@ test('重新开始取消时保留棋局，确认后清空棋盘', async ({ page 
   await expect(page.getByRole('status')).toHaveText('黑方回合')
 })
 
-test('音乐开关跨刷新保存并可重新开启', async ({ page }) => {
+test('音乐开关跨刷新保存并可重新开启', async ({ context, page }) => {
   const errors: string[] = []
-  const mediaRequests: string[] = []
+  const httpRequests: string[] = []
 
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text())
   })
-  page.on('request', (request) => {
-    if (request.resourceType() === 'media') mediaRequests.push(request.url())
+  context.on('request', (request) => {
+    const url = new URL(request.url())
+    if (url.protocol === 'http:' || url.protocol === 'https:') httpRequests.push(url.href)
   })
 
   await page.goto('/#/games/gomoku')
@@ -109,6 +110,10 @@ test('音乐开关跨刷新保存并可重新开启', async ({ page }) => {
   await page.getByRole('link', { name: '返回小游戏' }).click()
   await expect(page.getByRole('heading', { name: '小游戏' })).toBeVisible()
 
+  const appOrigin = new URL(page.url()).origin
+  const externalRequests = httpRequests.filter(
+    (requestUrl) => new URL(requestUrl).origin !== appOrigin,
+  )
   expect(errors).toEqual([])
-  expect(mediaRequests).toEqual([])
+  expect(externalRequests).toEqual([])
 })

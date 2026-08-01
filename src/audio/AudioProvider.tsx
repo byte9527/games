@@ -140,11 +140,13 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   const [notice, setNotice] = useState<string | null>(initialPreference.notice)
   const [scene, setScene] = useState<MusicScene | null>(null)
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== 'hidden')
+  const [needsResume, setNeedsResume] = useState(false)
   const [fatalError, setFatalError] = useState<Error | null>(null)
 
   const enabledRef = useRef(enabled)
   const availabilityRef = useRef<AudioController['availability']>(availability)
   const sceneRef = useRef<MusicScene | null>(null)
+  const needsResumeRef = useRef(false)
   const registrationsRef = useRef(new Map<symbol, MusicRegistration>())
   const engineRef = useRef<MusicEnginePort | null>(null)
   const unlockPromiseRef = useRef<Promise<void> | null>(null)
@@ -156,6 +158,11 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   const updateAvailability = useCallback((nextAvailability: AudioController['availability']) => {
     availabilityRef.current = nextAvailability
     setAvailability(nextAvailability)
+  }, [])
+
+  const updateNeedsResume = useCallback((nextNeedsResume: boolean) => {
+    needsResumeRef.current = nextNeedsResume
+    setNeedsResume(nextNeedsResume)
   }, [])
 
   const ensureEngineReady = useCallback((allowEngineCreation: boolean): Promise<void> => {
@@ -183,6 +190,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       if (disposedRef.current) return
 
       if (result.ok) {
+        updateNeedsResume(document.visibilityState === 'hidden')
         updateAvailability('ready')
       } else if (result.kind === 'unavailable') {
         updateAvailability('unavailable')
@@ -203,7 +211,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     })
     unlockPromiseRef.current = trackedUnlock
     return trackedUnlock
-  }, [updateAvailability])
+  }, [updateAvailability, updateNeedsResume])
 
   const clearTrustedToggleActivation = useCallback((expectedEvent?: Event): Event | null => {
     const activation = trustedToggleActivationRef.current
@@ -280,6 +288,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     return () => {
       disposedRef.current = true
       unlockPromiseRef.current = null
+      needsResumeRef.current = false
       clearTrustedToggleActivation()
       const engine = engineRef.current
       engineRef.current = null
@@ -316,7 +325,13 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
   }, [clearTrustedToggleActivation])
 
   useEffect(() => {
-    if (!enabled || availability !== 'locked') return
+    if (
+      !enabled ||
+      availability === 'unavailable' ||
+      (availability !== 'locked' && !needsResume)
+    ) {
+      return
+    }
 
     const requestUnlock = (event: Event) => {
       if (!event.isTrusted) return
@@ -326,20 +341,24 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       ) {
         return
       }
-      void ensureEngineReady(true)
+      if (availabilityRef.current !== 'locked' && !needsResumeRef.current) return
+      void ensureEngineReady(engineRef.current === null)
     }
     document.addEventListener('pointerdown', requestUnlock, true)
     document.addEventListener('keydown', requestUnlock, true)
+    document.addEventListener('click', requestUnlock, true)
 
     return () => {
       document.removeEventListener('pointerdown', requestUnlock, true)
       document.removeEventListener('keydown', requestUnlock, true)
+      document.removeEventListener('click', requestUnlock, true)
     }
-  }, [availability, enabled, ensureEngineReady])
+  }, [availability, enabled, ensureEngineReady, needsResume])
 
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        if (engineRef.current !== null) updateNeedsResume(true)
         setPageVisible(false)
         return
       }
@@ -347,6 +366,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       if (
         !enabledRef.current ||
         engineRef.current === null ||
+        !needsResumeRef.current ||
         sceneRef.current?.active !== true
       ) {
         setPageVisible(true)
@@ -361,7 +381,7 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
     }
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [ensureEngineReady])
+  }, [ensureEngineReady, updateNeedsResume])
 
   useEffect(() => {
     const engine = engineRef.current
@@ -371,12 +391,12 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
       engine.pause(scene?.score.fadeSeconds ?? 0)
     } else if (scene === null) {
       engine.stop()
-    } else if (scene.active) {
-      engine.play(scene.score)
-    } else {
+    } else if (!scene.active) {
       engine.pause(scene.score.fadeSeconds)
+    } else if (!needsResume) {
+      engine.play(scene.score)
     }
-  }, [availability, enabled, pageVisible, scene])
+  }, [availability, enabled, needsResume, pageVisible, scene])
 
   const controller = useMemo<AudioController>(
     () => ({ enabled, availability, notice, toggle, dismissNotice, setGameMusic }),

@@ -435,7 +435,7 @@ describe('AudioProvider', () => {
     expect(
       documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(1)
-    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(1)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(2)
 
     await activateAudioWithVerifiedSignal()
     act(() => {
@@ -451,7 +451,7 @@ describe('AudioProvider', () => {
     expect(
       documentEventBoundary.countActiveCaptureListeners('keydown'),
     ).toBe(1)
-    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(1)
+    expect(documentEventBoundary.countActiveCaptureListeners('click')).toBe(2)
 
     await act(async () => {
       deferred.resolve({ ok: true })
@@ -724,8 +724,12 @@ describe('AudioProvider', () => {
     expect(engine.play).toHaveBeenCalledWith(score)
   })
 
-  it('已有引擎但没有注册场景时，从隐藏恢复可见不会再次解锁且保持停止语义', async () => {
+  it('无注册场景恢复可见后保留待恢复状态，可信导航先恢复引擎再播放新场景', async () => {
+    const resume = createDeferred<MusicUnlockResult>()
     const engine = createEngine()
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockReturnValueOnce(resume.promise)
     const view = render(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
         <ControllerHarness />
@@ -754,10 +758,34 @@ describe('AudioProvider', () => {
 
     expect(engine.unlock).toHaveBeenCalledTimes(1)
     expect(engine.stop).toHaveBeenCalledTimes(1)
+
+    vi.mocked(engine.play).mockClear()
+    act(() => {
+      documentEventBoundary.dispatchTrustedCapture('pointerdown', document.body)
+    })
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    expect(engine.unlock).toHaveBeenCalledTimes(2)
+    expect(engine.play).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resume.resolve({ ok: true })
+      await resume.promise
+    })
+
+    expect(engine.play).toHaveBeenCalledWith(score)
   })
 
-  it('已有引擎但当前场景不活动时，从隐藏恢复可见不会再次解锁且保持暂停语义', async () => {
+  it('不活动场景恢复可见后保留待恢复状态，可信操作先恢复引擎再继续场景', async () => {
+    const resume = createDeferred<MusicUnlockResult>()
     const engine = createEngine()
+    vi.mocked(engine.unlock)
+      .mockResolvedValueOnce({ ok: true })
+      .mockReturnValueOnce(resume.promise)
     const view = render(
       <AudioProvider engineFactory={() => engine} storage={createStorage()}>
         <ControllerHarness />
@@ -786,6 +814,26 @@ describe('AudioProvider', () => {
 
     expect(engine.unlock).toHaveBeenCalledTimes(1)
     expect(engine.pause).toHaveBeenLastCalledWith(score.fadeSeconds)
+
+    vi.mocked(engine.play).mockClear()
+    act(() => {
+      documentEventBoundary.dispatchTrustedCapture('click', document.body)
+    })
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    expect(engine.unlock).toHaveBeenCalledTimes(2)
+    expect(engine.play).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resume.resolve({ ok: true })
+      await resume.promise
+    })
+
+    expect(engine.play).toHaveBeenCalledWith(score)
   })
 
   it('关闭后只有已验证可信开启信号会恢复已有引擎，完成前不播放', async () => {

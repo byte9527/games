@@ -79,7 +79,7 @@ const addUnitConflicts = (
   }
 }
 
-const collectConflictIndices = (board: readonly CellValue[]): number[] => {
+const collectConflictIndices = (board: readonly CellValue[]): ReadonlySet<number> => {
   const conflicts = new Set<number>()
 
   for (let unit = 0; unit < SUDOKU_SIZE; unit += 1) {
@@ -103,7 +103,7 @@ const collectConflictIndices = (board: readonly CellValue[]): number[] => {
     addUnitConflicts(board, boxIndices, conflicts)
   }
 
-  return [...conflicts].sort((left, right) => left - right)
+  return conflicts
 }
 
 export const assertCellIndex = (index: number): void => {
@@ -164,12 +164,12 @@ export const createBoardFromString = (input: string): CellValue[] => {
   return [...input].map(parseCellCharacter)
 }
 
-export const conflictIndices = (board: readonly CellValue[]): number[] => {
+export const conflictIndices = (board: readonly CellValue[]): ReadonlySet<number> => {
   assertBoard(board)
   return collectConflictIndices(board)
 }
 
 export const isSolvedBoard = (board: readonly CellValue[]): boolean => {
   assertBoard(board)
-  return board.every((value) => value !== null) && collectConflictIndices(board).length === 0
+  return board.every((value) => value !== null) && collectConflictIndices(board).size === 0
 }

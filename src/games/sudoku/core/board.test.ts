@@ -129,8 +129,25 @@ describe('sudoku board', () => {
   describe('冲突检测', () => {
     it('同时标记同行、同列、同宫中全部重复数字', () => {
       const board = createBoardFromString(THREE_WAY_CONFLICT_BOARD)
+      const conflicts: ReadonlySet<number> = conflictIndices(board)
 
-      expect(conflictIndices(board)).toEqual([0, 1, 8, 10, 20, 73])
+      expect(conflicts).not.toBeInstanceOf(Array)
+      expect(conflicts.size).toBe(6)
+      for (const index of [0, 1, 8, 10, 20, 73]) expect(conflicts.has(index)).toBe(true)
+    })
+
+    it('每次返回独立集合，不泄露可变内部状态', () => {
+      const board = createBoardFromString(THREE_WAY_CONFLICT_BOARD)
+      const first = conflictIndices(board)
+      const second = conflictIndices(board)
+
+      expect(first).not.toBe(second)
+
+      const mutableFirst = first as Set<number>
+      mutableFirst.clear()
+
+      expect(second.size).toBe(6)
+      expect(conflictIndices(board).size).toBe(6)
     })
 
     it('不修改输入棋盘', () => {

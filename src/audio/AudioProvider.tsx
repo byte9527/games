@@ -344,7 +344,11 @@ export function AudioProvider({ children, engineFactory, storage }: AudioProvide
         return
       }
 
-      if (!enabledRef.current || engineRef.current === null) {
+      if (
+        !enabledRef.current ||
+        engineRef.current === null ||
+        sceneRef.current?.active !== true
+      ) {
         setPageVisible(true)
         return
       }

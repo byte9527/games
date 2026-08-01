@@ -724,6 +724,70 @@ describe('AudioProvider', () => {
     expect(engine.play).toHaveBeenCalledWith(score)
   })
 
+  it('已有引擎但没有注册场景时，从隐藏恢复可见不会再次解锁且保持停止语义', async () => {
+    const engine = createEngine()
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <AudioActivationHarness />
+      </AudioProvider>,
+    )
+    expect(engine.stop).toHaveBeenCalled()
+
+    vi.mocked(engine.stop).mockClear()
+    vi.mocked(engine.pause).mockClear()
+    act(() => setVisibilityState('hidden'))
+    expect(engine.pause).toHaveBeenLastCalledWith(0)
+
+    await act(async () => {
+      setVisibilityState('visible')
+      await flushPromiseChain()
+    })
+
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+    expect(engine.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('已有引擎但当前场景不活动时，从隐藏恢复可见不会再次解锁且保持暂停语义', async () => {
+    const engine = createEngine()
+    const view = render(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness />
+      </AudioProvider>,
+    )
+
+    await activateAudioWithVerifiedSignal()
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <AudioProvider engineFactory={() => engine} storage={createStorage()}>
+        <ControllerHarness active={false} />
+      </AudioProvider>,
+    )
+    expect(engine.pause).toHaveBeenLastCalledWith(score.fadeSeconds)
+
+    vi.mocked(engine.pause).mockClear()
+    act(() => setVisibilityState('hidden'))
+    expect(engine.pause).toHaveBeenLastCalledWith(score.fadeSeconds)
+
+    vi.mocked(engine.pause).mockClear()
+    await act(async () => {
+      setVisibilityState('visible')
+      await flushPromiseChain()
+    })
+
+    expect(engine.unlock).toHaveBeenCalledTimes(1)
+    expect(engine.pause).toHaveBeenLastCalledWith(score.fadeSeconds)
+  })
+
   it('关闭后只有已验证可信开启信号会恢复已有引擎，完成前不播放', async () => {
     const resume = createDeferred<MusicUnlockResult>()
     const engine = createEngine()

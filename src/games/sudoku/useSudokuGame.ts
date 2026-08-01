@@ -18,6 +18,7 @@ import type { SudokuPuzzle, SudokuPuzzleProvider } from './puzzles/provider'
 import type { SudokuStoragePort } from './storage/storage'
 
 export interface SudokuClock {
+  /** 返回单调递增、有限、非负的整数毫秒值。 */
   now(): number
   setInterval(callback: () => void, intervalMs: number): number
   clearInterval(timerId: number): void
@@ -49,13 +50,14 @@ export interface UseSudokuGameOptions {
 interface ControllerState {
   readonly game: SudokuGameState
   readonly notice: string | null
+  readonly elapsedMs: number
 }
 
 const PLACEHOLDER_GIVENS = '0'.repeat(81)
 const STORAGE_UNAVAILABLE_NOTICE = '自动保存不可用，本局仍可继续。'
 
 const browserClock: SudokuClock = {
-  now: () => Date.now(),
+  now: () => Math.floor(performance.now()),
   setInterval: (callback, intervalMs) => window.setInterval(callback, intervalMs),
   clearInterval: (timerId) => window.clearInterval(timerId),
 }
@@ -97,14 +99,24 @@ function readClockNow(clock: SudokuClock): number {
   return now
 }
 
-function elapsedWithVisibleFragment(
+function readSavedAt(): number {
+  const savedAt = Date.now()
+  if (!Number.isFinite(savedAt) || !Number.isInteger(savedAt) || savedAt < 0) {
+    throw new Error(
+      `Sudoku savedAt must be a finite non-negative integer; received ${String(savedAt)}`,
+    )
+  }
+  return savedAt
+}
+
+function elapsedAt(
   game: SudokuGameState,
   visibleStart: number | null,
-  clock: SudokuClock,
+  now: number,
 ): number {
   if (game.status !== 'playing' || visibleStart === null) return game.elapsedMs
 
-  const delta = readClockNow(clock) - visibleStart
+  const delta = now - visibleStart
   if (!Number.isFinite(delta) || !Number.isInteger(delta) || delta < 0) {
     throw new Error(
       `Sudoku clock delta must be a finite non-negative integer; received ${String(delta)}`,
@@ -132,8 +144,8 @@ export function useSudokuGame({
       PLACEHOLDER_GIVENS,
     ),
     notice: null,
+    elapsedMs: 0,
   }))
-  const [, setDisplayRevision] = useState(0)
   const initialStorageRef = useRef(storage)
   const initialPuzzlesRef = useRef(puzzles)
   const gameRef = useRef(state.game)
@@ -146,6 +158,8 @@ export function useSudokuGame({
   const timerClockRef = useRef<SudokuClock | null>(null)
   const mountedRef = useRef(false)
   const pageSuspendedRef = useRef(false)
+  const lastClockNowRef = useRef<number | null>(null)
+  const pendingStorageNoticeRef = useRef(false)
 
   useLayoutEffect(() => {
     if (initializedRef.current) return
@@ -155,7 +169,11 @@ export function useSudokuGame({
     const loadResult = initialStorage.load()
     if (loadResult.kind === 'loaded') {
       gameRef.current = loadResult.game
-      setState({ game: loadResult.game, notice: null })
+      setState({
+        game: loadResult.game,
+        notice: null,
+        elapsedMs: loadResult.game.elapsedMs,
+      })
       return
     }
 
@@ -173,7 +191,7 @@ export function useSudokuGame({
 
     const game = createGameFromPuzzle(puzzle)
     gameRef.current = game
-    setState({ game, notice })
+    setState({ game, notice, elapsedMs: game.elapsedMs })
   }, [])
 
   useLayoutEffect(() => {
@@ -183,7 +201,11 @@ export function useSudokuGame({
 
   const updateGame = useCallback((game: SudokuGameState): void => {
     gameRef.current = game
-    setState((current) => current.game === game ? current : { ...current, game })
+    setState((current) => (
+      current.game === game && current.elapsedMs === game.elapsedMs
+        ? current
+        : { ...current, game, elapsedMs: game.elapsedMs }
+    ))
   }, [])
 
   const showStorageUnavailableNotice = useCallback((): void => {
@@ -201,6 +223,18 @@ export function useSudokuGame({
     timerClockRef.current = null
   }, [])
 
+  const readElapsedNow = useCallback((): number => {
+    const now = readClockNow(clockRef.current)
+    const previousNow = lastClockNowRef.current
+    if (previousNow !== null && now < previousNow) {
+      throw new Error(
+        `Sudoku clock delta must be a finite non-negative integer; received ${String(now - previousNow)}`,
+      )
+    }
+    lastClockNowRef.current = now
+    return now
+  }, [])
+
   const materializeVisibleFragment = useCallback((
     now: number,
     continueTiming: boolean,
@@ -213,25 +247,17 @@ export function useSudokuGame({
       return current
     }
 
-    const delta = now - visibleStart
-    if (!Number.isFinite(delta) || !Number.isInteger(delta) || delta < 0) {
-      throw new Error(
-        `Sudoku clock delta must be a finite non-negative integer; received ${String(delta)}`,
-      )
-    }
-
-    const next = withElapsedMs(current, current.elapsedMs + delta)
+    const next = withElapsedMs(current, elapsedAt(current, visibleStart, now))
     gameRef.current = next
     visibleStartRef.current = continueTiming ? now : null
-    if (updateUi && mountedRef.current && next !== current) {
-      setState((controllerState) => ({ ...controllerState, game: next }))
+    if (updateUi && mountedRef.current) {
+      setState((controllerState) => (
+        controllerState.game === next && controllerState.elapsedMs === next.elapsedMs
+          ? controllerState
+          : { ...controllerState, game: next, elapsedMs: next.elapsedMs }
+      ))
     }
     return next
-  }, [])
-
-  const requestDisplayRender = useCallback((): void => {
-    if (!mountedRef.current) return
-    setDisplayRevision((revision) => revision + 1)
   }, [])
 
   const startVisibleTiming = useCallback((): void => {
@@ -246,7 +272,7 @@ export function useSudokuGame({
 
     const activeClock = clockRef.current
     if (visibleStartRef.current === null) {
-      visibleStartRef.current = readClockNow(activeClock)
+      visibleStartRef.current = readElapsedNow()
     }
     if (timerIdRef.current !== null) return
 
@@ -259,16 +285,17 @@ export function useSudokuGame({
       ) {
         return
       }
-      requestDisplayRender()
+      const now = readElapsedNow()
+      const elapsedMs = elapsedAt(gameRef.current, visibleStartRef.current, now)
+      setState((controllerState) => controllerState.elapsedMs === elapsedMs
+        ? controllerState
+        : { ...controllerState, elapsedMs })
     }, 1_000)
     timerIdRef.current = timerId
     timerClockRef.current = activeClock
-  }, [requestDisplayRender])
+  }, [readElapsedNow])
 
-  const persistChangedGame = useCallback((
-    game: SudokuGameState,
-    savedAt: number,
-  ): void => {
+  const persistChangedGame = useCallback((game: SudokuGameState): void => {
     updateGame(game)
     if (game.status === 'completed') {
       visibleStartRef.current = null
@@ -277,7 +304,9 @@ export function useSudokuGame({
       return
     }
 
-    if (!storageRef.current.save(game, savedAt).ok) showStorageUnavailableNotice()
+    if (!storageRef.current.save(game, readSavedAt()).ok) {
+      showStorageUnavailableNotice()
+    }
   }, [showStorageUnavailableNotice, stopTimer, updateGame])
 
   const applyGameAction = useCallback(
@@ -285,12 +314,12 @@ export function useSudokuGame({
       const current = gameRef.current
       const next = action(current)
       if (next === current) return
-      const now = readClockNow(clockRef.current)
+      const now = readElapsedNow()
       const timedCurrent = materializeVisibleFragment(now, true, false)
       const timedNext = withElapsedMs(next, timedCurrent.elapsedMs)
-      persistChangedGame(timedNext, now)
+      persistChangedGame(timedNext)
     },
-    [materializeVisibleFragment, persistChangedGame],
+    [materializeVisibleFragment, persistChangedGame, readElapsedNow],
   )
 
   const select = useCallback((index: number): void => {
@@ -318,7 +347,7 @@ export function useSudokuGame({
   }, [applyGameAction])
 
   const restart = useCallback((): void => {
-    const now = readClockNow(clockRef.current)
+    const now = readElapsedNow()
     materializeVisibleFragment(now, false, false)
     stopTimer()
 
@@ -326,7 +355,7 @@ export function useSudokuGame({
     updateGame(next)
     if (!storageRef.current.clear().ok) showStorageUnavailableNotice()
     startVisibleTiming()
-  }, [materializeVisibleFragment, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
+  }, [materializeVisibleFragment, readElapsedNow, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 
   const newPuzzle = useCallback((difficulty: Difficulty): void => {
     const current = gameRef.current
@@ -337,7 +366,7 @@ export function useSudokuGame({
     assertSelectedPuzzle(puzzle, difficulty, previousId)
     const next = createGameFromPuzzle(puzzle)
 
-    const now = readClockNow(clockRef.current)
+    const now = readElapsedNow()
     materializeVisibleFragment(now, false, false)
     stopTimer()
 
@@ -346,20 +375,20 @@ export function useSudokuGame({
     updateGame(next)
     if (!recentResult.ok || !clearResult.ok) showStorageUnavailableNotice()
     startVisibleTiming()
-  }, [materializeVisibleFragment, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
+  }, [materializeVisibleFragment, readElapsedNow, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 
   useLayoutEffect(() => {
     if (clockRef.current === clock) return
 
-    const previousClock = clockRef.current
     if (visibleStartRef.current !== null && gameRef.current.status === 'playing') {
-      const previousNow = readClockNow(previousClock)
+      const previousNow = readElapsedNow()
       materializeVisibleFragment(previousNow, false, true)
     }
     stopTimer()
     clockRef.current = clock
+    lastClockNowRef.current = null
     startVisibleTiming()
-  }, [clock, materializeVisibleFragment, startVisibleTiming, stopTimer])
+  }, [clock, materializeVisibleFragment, readElapsedNow, startVisibleTiming, stopTimer])
 
   useLayoutEffect(() => {
     mountedRef.current = true
@@ -375,10 +404,12 @@ export function useSudokuGame({
         gameRef.current.status === 'playing' &&
         visibleStartRef.current !== null
       ) {
-        const now = readClockNow(clockRef.current)
+        const now = readElapsedNow()
         const game = materializeVisibleFragment(now, false, true)
         stopTimer()
-        if (!storageRef.current.save(game, now).ok) showStorageUnavailableNotice()
+        if (!storageRef.current.save(game, readSavedAt()).ok) {
+          showStorageUnavailableNotice()
+        }
       } else {
         stopTimer()
       }
@@ -393,15 +424,21 @@ export function useSudokuGame({
         stopTimer()
         return
       }
-      const now = readClockNow(clockRef.current)
+      const now = readElapsedNow()
       const game = materializeVisibleFragment(now, false, false)
       stopTimer()
-      storageRef.current.save(game, now)
+      if (!storageRef.current.save(game, readSavedAt()).ok) {
+        pendingStorageNoticeRef.current = true
+      }
     }
 
     const handlePageShow = (): void => {
       pageSuspendedRef.current = false
       updateGame(gameRef.current)
+      if (pendingStorageNoticeRef.current) {
+        pendingStorageNoticeRef.current = false
+        showStorageUnavailableNotice()
+      }
       startVisibleTiming()
     }
 
@@ -420,13 +457,13 @@ export function useSudokuGame({
         gameRef.current.status === 'playing' &&
         visibleStartRef.current !== null
       ) {
-        const now = readClockNow(clockRef.current)
+        const now = readElapsedNow()
         const game = materializeVisibleFragment(now, false, false)
-        storageRef.current.save(game, now)
+        storageRef.current.save(game, readSavedAt())
       }
       stopTimer()
     }
-  }, [materializeVisibleFragment, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
+  }, [materializeVisibleFragment, readElapsedNow, showStorageUnavailableNotice, startVisibleTiming, stopTimer, updateGame])
 
   const dismissNotice = useCallback((): void => {
     setState((current) => ({ ...current, notice: null }))
@@ -440,13 +477,7 @@ export function useSudokuGame({
     game: state.game,
     conflicts,
     notice: state.notice,
-    get elapsedMs(): number {
-      return elapsedWithVisibleFragment(
-        gameRef.current,
-        visibleStartRef.current,
-        clockRef.current,
-      )
-    },
+    elapsedMs: state.elapsedMs,
     hasProgress: state.game.history.length > 0,
     select,
     move,

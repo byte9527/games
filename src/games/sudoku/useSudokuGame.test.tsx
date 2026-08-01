@@ -1,4 +1,4 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, render, renderHook, screen } from '@testing-library/react'
 import { StrictMode, type ReactNode } from 'react'
 import { vi } from 'vitest'
 
@@ -178,21 +178,14 @@ class FakeClock implements SudokuClock {
 
   advance(ms: number): void {
     const target = this.currentNow + ms
-    while (true) {
-      let dueAt = Number.POSITIVE_INFINITY
-      for (const timer of this.timers.values()) dueAt = Math.min(dueAt, timer.nextAt)
-      if (dueAt > target) break
-
-      this.currentNow = dueAt
-      const dueTimers = [...this.timers.entries()]
-        .filter(([, timer]) => timer.nextAt === dueAt)
-      for (const [timerId, timer] of dueTimers) {
-        timer.callback()
-        const activeTimer = this.timers.get(timerId)
-        if (activeTimer !== undefined) activeTimer.nextAt += activeTimer.intervalMs
-      }
-    }
     this.currentNow = target
+    const dueTimers = [...this.timers.entries()]
+      .filter(([, timer]) => timer.nextAt <= target)
+    for (const [timerId, timer] of dueTimers) {
+      timer.callback()
+      const activeTimer = this.timers.get(timerId)
+      if (activeTimer !== undefined) activeTimer.nextAt = target + activeTimer.intervalMs
+    }
   }
 
   jump(ms: number): void {
@@ -232,6 +225,19 @@ function installVisibility(initial: DocumentVisibilityState): {
       else Object.defineProperty(document, 'visibilityState', original)
     },
   }
+}
+
+function ElapsedConsumer({
+  storage,
+  puzzles,
+  clock,
+}: {
+  readonly storage: SudokuStoragePort
+  readonly puzzles: SudokuPuzzleProvider
+  readonly clock: SudokuClock
+}): ReactNode {
+  const controller = useSudokuGame({ storage, puzzles, clock })
+  return <output data-testid="elapsed">{controller.elapsedMs}</output>
 }
 
 describe('useSudokuGame', () => {
@@ -557,6 +563,50 @@ describe('useSudokuGame', () => {
     }
   })
 
+  it('同一 controller 的 elapsedMs 是稳定普通 number，旧快照不随时钟或新 render 改变', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      const { result } = renderHook(() => useSudokuGame({
+        storage: new FakeStorage(),
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+      const initialController = result.current
+
+      clock.jump(2_500)
+      expect(initialController.elapsedMs).toBe(0)
+      expect(initialController.elapsedMs).toBe(0)
+
+      act(() => clock.fireIntervalsOnce())
+      expect(result.current.elapsedMs).toBe(2_500)
+      expect(initialController.elapsedMs).toBe(0)
+    } finally {
+      visibility.restore()
+    }
+  })
+
+  it('真实消费组件仅在 interval callback 后渲染新的 elapsed 文本', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      render(<ElapsedConsumer
+        storage={new FakeStorage()}
+        puzzles={new FakePuzzles()}
+        clock={clock}
+      />)
+
+      expect(screen.getByTestId('elapsed')).toHaveTextContent('0')
+      clock.jump(2_500)
+      expect(screen.getByTestId('elapsed')).toHaveTextContent('0')
+
+      act(() => clock.fireIntervalsOnce())
+      expect(screen.getByTestId('elapsed')).toHaveTextContent('2500')
+    } finally {
+      visibility.restore()
+    }
+  })
+
   it('动作发生时才把当前可见片段物化到 core game 与存档', () => {
     const visibility = installVisibility('visible')
     try {
@@ -800,6 +850,7 @@ describe('useSudokuGame', () => {
 
   it('真实卸载同步保存尚未 tick 的最新 playing elapsed', () => {
     const visibility = installVisibility('visible')
+    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(42_000)
     try {
       const clock = new FakeClock()
       const storage = new FakeStorage()
@@ -813,9 +864,10 @@ describe('useSudokuGame', () => {
       hook.unmount()
 
       expect(storage.saved.at(-1)?.game.elapsedMs).toBe(2_500)
-      expect(storage.saved.at(-1)?.savedAt).toBe(2_500)
+      expect(storage.saved.at(-1)?.savedAt).toBe(42_000)
       expect(clock.activeTimerCount).toBe(0)
     } finally {
+      dateNow.mockRestore()
       visibility.restore()
     }
   })
@@ -891,6 +943,54 @@ describe('useSudokuGame', () => {
     }
   })
 
+  it('pagehide 保存失败不渲染，BFCache pageshow 后显示待处理 notice', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      const storage = new FakeStorage()
+      storage.saveOk = false
+      const { result } = renderHook(() => useSudokuGame({
+        storage,
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+      const beforePageHide = result.current
+
+      clock.jump(1_700)
+      act(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })))
+      expect(result.current).toBe(beforePageHide)
+      expect(result.current.notice).toBeNull()
+
+      act(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })))
+      expect(result.current.notice).toBe('自动保存不可用，本局仍可继续。')
+    } finally {
+      visibility.restore()
+    }
+  })
+
+  it('非 persisted pagehide 后卸载不重复保存', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      const storage = new FakeStorage()
+      const hook = renderHook(() => useSudokuGame({
+        storage,
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+
+      clock.jump(900)
+      act(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })))
+      hook.unmount()
+
+      expect(storage.saved).toHaveLength(1)
+      expect(storage.saved[0]?.game.elapsedMs).toBe(900)
+      expect(clock.activeTimerCount).toBe(0)
+    } finally {
+      visibility.restore()
+    }
+  })
+
   it('替换 clock 时用旧 clock 结算后迁移到新 clock 的唯一 timer', () => {
     const visibility = installVisibility('visible')
     try {
@@ -906,6 +1006,7 @@ describe('useSudokuGame', () => {
       )
 
       act(() => first.advance(1_500))
+      const oldController = result.current
       rerender({ clock: second })
       expect(result.current.elapsedMs).toBe(1_500)
       expect(first.activeTimerCount).toBe(0)
@@ -913,6 +1014,58 @@ describe('useSudokuGame', () => {
 
       act(() => second.advance(1_000))
       expect(result.current.elapsedMs).toBe(2_500)
+      expect(oldController.elapsedMs).toBe(1_500)
+    } finally {
+      visibility.restore()
+    }
+  })
+
+  it('墙上时间前跳或回拨只改变 savedAt，不影响单调 elapsed', () => {
+    const visibility = installVisibility('visible')
+    const dateNow = vi.spyOn(Date, 'now')
+    try {
+      const clock = new FakeClock()
+      const storage = new FakeStorage()
+      const { result } = renderHook(() => useSudokuGame({
+        storage,
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+
+      dateNow.mockReturnValue(900_000)
+      clock.jump(2_500)
+      act(() => result.current.select(2))
+      expect(storage.saved.at(-1)?.savedAt).toBe(900_000)
+      expect(result.current.elapsedMs).toBe(2_500)
+
+      dateNow.mockReturnValue(100)
+      clock.jump(1_000)
+      act(() => result.current.move('right'))
+      expect(storage.saved.at(-1)?.savedAt).toBe(100)
+      expect(result.current.elapsedMs).toBe(3_500)
+    } finally {
+      dateNow.mockRestore()
+      visibility.restore()
+    }
+  })
+
+  it('injected elapsed clock 回拨时明确暴露单调契约错误', () => {
+    const visibility = installVisibility('visible')
+    try {
+      const clock = new FakeClock()
+      renderHook(() => useSudokuGame({
+        storage: new FakeStorage(),
+        puzzles: new FakePuzzles(),
+        clock,
+      }))
+
+      clock.setNow(1_000)
+      act(() => clock.fireIntervalsOnce())
+      clock.setNow(900)
+      expect(() => act(() => clock.fireIntervalsOnce())).toThrow(
+        'Sudoku clock delta must be a finite non-negative integer',
+      )
+      clock.setNow(1_000)
     } finally {
       visibility.restore()
     }

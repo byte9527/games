@@ -16,6 +16,7 @@ vi.mock('virtual:pwa-register/react', () => ({
 
 beforeEach(() => {
   swMocks.needRefresh = false
+  window.localStorage.clear()
 })
 
 afterEach(() => {

@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import { AudioProvider } from '../audio/AudioProvider'
 import { gameCatalog, type GameCatalogItem } from '../games/catalog'
 import { GomokuPage } from '../games/gomoku/GomokuPage'
 import { GameCatalogPage } from '../pages/GameCatalogPage'
@@ -11,7 +12,7 @@ const gamePages: Record<GameCatalogItem['id'], ComponentType> = {
   gomoku: GomokuPage,
 }
 
-export function App() {
+function AppContent() {
   const route = useHashRoute()
   const activeGame = gameCatalog.find((game) => game.path === route)
   const GamePage = activeGame ? gamePages[activeGame.id] : null
@@ -24,5 +25,13 @@ export function App() {
       </div>
       {GamePage ? <GamePage /> : <GameCatalogPage />}
     </div>
+  )
+}
+
+export function App() {
+  return (
+    <AudioProvider>
+      <AppContent />
+    </AudioProvider>
   )
 }

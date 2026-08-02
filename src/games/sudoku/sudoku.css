@@ -308,6 +308,56 @@
   gap: 8px;
 }
 
+@media (max-width: 759px) {
+  .sudoku-page .game-header {
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+
+  .sudoku-page .game-title-row,
+  .sudoku-page .sudoku-meta {
+    gap: 4px 8px;
+  }
+
+  .sudoku-page .sudoku-meta span,
+  .sudoku-page .conflict-status {
+    min-height: 28px;
+    padding: 4px 9px;
+  }
+
+  .sudoku-page .conflict-status {
+    margin-bottom: 6px;
+  }
+
+  .sudoku-page .sudoku-layout {
+    gap: 8px;
+  }
+
+  .sudoku-page .sudoku-panel {
+    gap: 6px;
+  }
+
+  .sudoku-page .number-pad {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .sudoku-page .number-pad button:nth-child(10) {
+    grid-column: span 2;
+  }
+
+  .sudoku-page .number-pad button,
+  .sudoku-page .sudoku-controls button,
+  .sudoku-page .difficulty-selector button {
+    padding: 6px 4px;
+  }
+
+  .sudoku-page .sudoku-controls,
+  .sudoku-page .difficulty-selector {
+    gap: 4px;
+  }
+}
+
 @media (min-width: 760px) {
   .sudoku-page .sudoku-layout {
     grid-template-columns: minmax(0, 620px) minmax(220px, 260px);

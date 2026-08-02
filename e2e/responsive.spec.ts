@@ -406,12 +406,22 @@ for (const viewport of [
   { label: '320×740', width: 320, height: 740 },
   { label: '375×812', width: 375, height: 812 },
   { label: 'iPhone 13', width: 390, height: 844 },
+  { label: '759px 断点', width: 759, height: 1024 },
+  { label: '760px 断点', width: 760, height: 1024 },
   { label: '768px', width: 768, height: 1024 },
   { label: '1440px', width: 1440, height: 1000 },
 ]) {
   test(`数独在 ${viewport.label} 视口无溢出且棋盘与控制区可操作`, async ({ page }) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height })
     await openSudoku(page)
+    if (viewport.width === 320 || viewport.width === 375) {
+      await page.locator('.pwa-controls').evaluate((controls) => {
+        // 首屏目标只覆盖无安装或更新提示的正常棋局状态。
+        for (const child of controls.children) {
+          if (child instanceof HTMLElement) child.style.display = 'none'
+        }
+      })
+    }
 
     const independentControls = page.locator(
       '.number-pad button, .sudoku-controls button, .difficulty-selector button',
@@ -429,6 +439,17 @@ for (const viewport of [
     const metrics = await page.evaluate(() => {
       const board = document.querySelector<HTMLElement>('.sudoku-board')?.getBoundingClientRect()
       const numberPad = document.querySelector<HTMLElement>('.number-pad')?.getBoundingClientRect()
+      const numberPadButtons = Array.from(
+        document.querySelectorAll<HTMLElement>('.number-pad button'),
+        (button) => {
+          const bounds = button.getBoundingClientRect()
+          return {
+            top: bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+          }
+        },
+      )
       const controls = Array.from(
         document.querySelectorAll<HTMLElement>(
           '.number-pad button, .sudoku-controls button, .difficulty-selector button',
@@ -446,8 +467,11 @@ for (const viewport of [
       const cell = document.querySelector<HTMLElement>('.sudoku-cell')?.getBoundingClientRect()
       return {
         documentWidth: document.documentElement.scrollWidth,
+        documentHeight: document.documentElement.scrollHeight,
         bodyWidth: document.body.scrollWidth,
+        bodyHeight: document.body.scrollHeight,
         viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
         board: board === undefined ? null : {
           width: board.width,
           height: board.height,
@@ -462,6 +486,7 @@ for (const viewport of [
         },
         cellWidth: cell?.width ?? 0,
         controls,
+        numberPadButtons,
       }
     })
 
@@ -486,6 +511,41 @@ for (const viewport of [
     if (viewport.width === 320) {
       expect(metrics.cellWidth).toBeGreaterThanOrEqual(28)
       expect(metrics.cellWidth).toBeLessThan(44)
+    }
+    if (viewport.width === 320 || viewport.width === 375) {
+      expect(metrics.documentHeight).toBeLessThanOrEqual(metrics.viewportHeight)
+      expect(metrics.bodyHeight).toBeLessThanOrEqual(metrics.viewportHeight)
+    }
+    expect(metrics.numberPadButtons).toHaveLength(11)
+
+    if (viewport.width < 760) {
+      const rowTops = Array.from(new Set(
+        metrics.numberPadButtons.map(({ top }) => Math.round(top)),
+      ))
+      expect(rowTops).toHaveLength(2)
+
+      const firstRowTop = Math.round(metrics.numberPadButtons[0]?.top ?? -1)
+      const secondRowTop = Math.round(metrics.numberPadButtons[6]?.top ?? -1)
+      expect(metrics.numberPadButtons.slice(0, 6).every(
+        ({ top }) => Math.round(top) === firstRowTop,
+      )).toBe(true)
+      expect(metrics.numberPadButtons.slice(6).every(
+        ({ top }) => Math.round(top) === secondRowTop,
+      )).toBe(true)
+      expect(secondRowTop).toBeGreaterThan(firstRowTop)
+
+      const digitWidth = metrics.numberPadButtons[0]?.width ?? 0
+      const noteModeWidth = metrics.numberPadButtons[9]?.width ?? 0
+      expect(noteModeWidth).toBeGreaterThanOrEqual(digitWidth * 2)
+    } else {
+      const rowTops = Array.from(new Set(
+        metrics.numberPadButtons.map(({ top }) => Math.round(top)),
+      ))
+      expect(rowTops).toHaveLength(4)
+
+      const digitWidth = metrics.numberPadButtons[0]?.width ?? 0
+      const noteModeWidth = metrics.numberPadButtons[9]?.width ?? 0
+      expect(Math.abs(noteModeWidth - digitWidth)).toBeLessThanOrEqual(1)
     }
   })
 }
